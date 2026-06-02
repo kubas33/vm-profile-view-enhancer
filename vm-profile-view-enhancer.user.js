@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         VM Profile View Enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.1.3
+// @version      0.1.4
 // @description  Enhances VM Manager player profile attributes with position-aware markers and summary.
 // @match        *://*.vm-manager.org/*
 // @grant        none
 // @run-at       document-end
-// @updateURL    https://github.com/kubas33/vm-profile-view-enhancer/raw/refs/heads/main/vm-profile-view-enhancer.user.js
-// @downloadURL  https://github.com/kubas33/vm-profile-view-enhancer/raw/refs/heads/main/vm-profile-view-enhancer.user.js
+// @updateURL    https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-profile-view-enhancer.user.js
+// @downloadURL  https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-profile-view-enhancer.user.js
 // ==/UserScript==
 
 (function () {

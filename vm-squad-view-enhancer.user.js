@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         VM Squad View Enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.1.5
+// @version      0.1.6
 // @description  Enhances VM Manager squad view with training bar progress.
 // @match        *://*.vm-manager.org/*
 // @grant        none
 // @run-at       document-end
-// @updateURL    https://github.com/kubas33/vm-profile-view-enhancer/raw/refs/heads/main/vm-squad-view-enhancer.user.js
-// @downloadURL  https://github.com/kubas33/vm-profile-view-enhancer/raw/refs/heads/main/vm-squad-view-enhancer.user.js
+// @updateURL    https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-squad-view-enhancer.user.js
+// @downloadURL  https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-squad-view-enhancer.user.js
 // ==/UserScript==
 
 (function (root, factory) {
