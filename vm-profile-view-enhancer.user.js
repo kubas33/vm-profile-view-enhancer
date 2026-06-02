@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VM Profile View Enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.1.2
+// @version      0.1.3
 // @description  Enhances VM Manager player profile attributes with position-aware markers and summary.
 // @match        *://*.vm-manager.org/*
 // @grant        none
