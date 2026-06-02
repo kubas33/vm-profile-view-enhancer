@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VM Squad View Enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.1.10
+// @version      0.1.11
 // @description  Enhances VM Manager squad view with training progress and position fit.
 // @match        *://*.vm-manager.org/*
 // @grant        none
@@ -42,8 +42,18 @@
   var TRAINING_URL = '/Ajax_handler.php?phpsite=view_body.php&action=Training';
   var CACHE_KEY = 'vms.trainingPlayerData.v2';
   var CACHE_TTL_MS = 5 * 60 * 1000;
-  var COLUMN_WIDTH = 64;
+  var COLUMN_WIDTH = 76;
   var FIT_COLUMN_WIDTH = 58;
+  var DATA_COLUMN_WIDTHS = {
+    age: 36,
+    height: 52,
+    fit: 58,
+    form: 42,
+    training: 76,
+    experience: 34,
+    salary: 78,
+    value: 82
+  };
   var MAX_ATTRIBUTE = 50.5;
   var SORT_COLUMNS = {
     'Zawodnik': 'name',
@@ -321,9 +331,9 @@
       '}',
       '.vms-training-cell {',
       '  box-sizing: border-box;',
-      '  width: 64px;',
-      '  min-width: 64px;',
-      '  max-width: 64px;',
+      '  width: 76px;',
+      '  min-width: 76px;',
+      '  max-width: 76px;',
       '  white-space: nowrap;',
       '  padding-left: 3px;',
       '  padding-right: 3px;',
@@ -397,14 +407,14 @@
       '  align-items: center;',
       '  justify-content: flex-start;',
       '  gap: 4px;',
-      '  width: 58px;',
-      '  min-width: 58px;',
+      '  width: 70px;',
+      '  min-width: 70px;',
       '  vertical-align: middle;',
       '}',
       '.vms-training-bar {',
       '  position: relative;',
       '  display: inline-block;',
-      '  width: 28px;',
+      '  width: 44px;',
       '  height: 7px;',
       '  overflow: hidden;',
       '  border: 1px solid rgba(80, 156, 202, 0.55);',
@@ -651,6 +661,22 @@
     table.setAttribute(ENHANCED_TABLE_ATTR, String(targetAmount));
   }
 
+  function setCellWidth(cell, width, align) {
+    if (!cell) {
+      return;
+    }
+
+    cell.setAttribute('width', String(width));
+    cell.style.width = width + 'px';
+    cell.style.minWidth = width + 'px';
+    cell.style.maxWidth = width + 'px';
+    cell.style.boxSizing = 'border-box';
+    if (align) {
+      cell.setAttribute('align', align);
+      cell.style.textAlign = align;
+    }
+  }
+
   function getActivePositionFilters(documentRef) {
     var checkboxes = Array.prototype.slice.call(documentRef.querySelectorAll('.' + FILTER_CHECKBOX_CLASS));
     var active = {};
@@ -766,8 +792,11 @@
     var i;
     var playerHeaderCell;
     var spacerCell;
+    var existingCount;
+    var added = 0;
 
-    if (row.querySelector('.' + HEADER_SPACER_CLASS)) {
+    existingCount = row.querySelectorAll('.' + HEADER_SPACER_CLASS).length;
+    if (existingCount >= 2) {
       return false;
     }
 
@@ -782,14 +811,43 @@
       return false;
     }
 
-    spacerCell = playerHeaderCell.ownerDocument.createElement('td');
-    spacerCell.className = playerHeaderCell.className + ' ' + HEADER_SPACER_CLASS;
-    spacerCell.setAttribute('width', '24');
-    spacerCell.setAttribute('align', 'center');
-    spacerCell.innerHTML = '<b>&nbsp;</b>';
-    playerHeaderCell.parentNode.insertBefore(spacerCell, playerHeaderCell.nextSibling);
+    while (existingCount + added < 2) {
+      spacerCell = playerHeaderCell.ownerDocument.createElement('td');
+      spacerCell.className = playerHeaderCell.className + ' ' + HEADER_SPACER_CLASS;
+      spacerCell.setAttribute('align', 'center');
+      spacerCell.innerHTML = '<b>&nbsp;</b>';
+      setCellWidth(spacerCell, 24, 'center');
+      playerHeaderCell.parentNode.insertBefore(spacerCell, playerHeaderCell.nextSibling);
+      added += 1;
+    }
 
     return true;
+  }
+
+  function stabilizeHeaderWidths(row) {
+    var cells = Array.prototype.slice.call(row.children);
+
+    cells.forEach(function (cell) {
+      var label = getHeaderLabel(cell);
+
+      if (label === 'Wiek') {
+        setCellWidth(cell, DATA_COLUMN_WIDTHS.age, 'center');
+      } else if (label === 'Wzrost') {
+        setCellWidth(cell, DATA_COLUMN_WIDTHS.height, 'center');
+      } else if (label === 'Przyd.') {
+        setCellWidth(cell, DATA_COLUMN_WIDTHS.fit, 'center');
+      } else if (label === 'Forma') {
+        setCellWidth(cell, DATA_COLUMN_WIDTHS.form, 'center');
+      } else if (label === 'Trening') {
+        setCellWidth(cell, DATA_COLUMN_WIDTHS.training, 'center');
+      } else if (label === 'Doś.') {
+        setCellWidth(cell, DATA_COLUMN_WIDTHS.experience, 'center');
+      } else if (label === 'Pensja') {
+        setCellWidth(cell, DATA_COLUMN_WIDTHS.salary, 'center');
+      } else if (label === 'Wartość') {
+        setCellWidth(cell, DATA_COLUMN_WIDTHS.value, 'center');
+      }
+    });
   }
 
   function enhanceHeaderRow(row) {
@@ -805,8 +863,9 @@
 
     if (row.querySelector('.' + HEADER_CLASS) && row.querySelector('.' + FIT_HEADER_CLASS)) {
       if (addedNationalityHeader) {
-        incrementTableColspans(row.closest('table'), 3);
+        incrementTableColspans(row.closest('table'), 4);
       }
+      stabilizeHeaderWidths(row);
       enhanceFilterPanel(row);
       return;
     }
@@ -842,7 +901,8 @@
       formHeaderCell.parentNode.insertBefore(trainingCell, formHeaderCell.nextSibling);
     }
 
-    incrementTableColspans(row.closest('table'), 3);
+    stabilizeHeaderWidths(row);
+    incrementTableColspans(row.closest('table'), 4);
     enhanceFilterPanel(row);
   }
 
@@ -920,6 +980,19 @@
     });
   }
 
+  function stabilizePlayerRowWidths(row, linkInfo) {
+    setCellWidth(row.children[linkInfo.index + 1], 24, 'center');
+    setCellWidth(row.children[linkInfo.index + 2], 24, 'center');
+    setCellWidth(row.children[linkInfo.index + 3], DATA_COLUMN_WIDTHS.age, 'center');
+    setCellWidth(row.children[linkInfo.index + 4], DATA_COLUMN_WIDTHS.height, 'center');
+    setCellWidth(row.children[linkInfo.index + 5], DATA_COLUMN_WIDTHS.fit, 'center');
+    setCellWidth(row.children[linkInfo.index + 6], DATA_COLUMN_WIDTHS.form, 'center');
+    setCellWidth(row.children[linkInfo.index + 7], DATA_COLUMN_WIDTHS.training, 'center');
+    setCellWidth(row.children[linkInfo.index + 8], DATA_COLUMN_WIDTHS.experience, 'center');
+    setCellWidth(row.children[linkInfo.index + 9], DATA_COLUMN_WIDTHS.salary, 'right');
+    setCellWidth(row.children[linkInfo.index + 10], DATA_COLUMN_WIDTHS.value, 'right');
+  }
+
   function enhancePlayerRow(row) {
     var existing = row.querySelector('.' + CELL_CLASS);
     var linkInfo;
@@ -939,6 +1012,7 @@
     row.setAttribute('data-vms-position-short', getPositionShortFromRow(row));
 
     if (existing && row.querySelector('.' + FIT_CELL_CLASS)) {
+      stabilizePlayerRowWidths(row, linkInfo);
       return existing;
     }
 
@@ -974,6 +1048,7 @@
     }
 
     incrementTableColspans(row.closest('table'), 2);
+    stabilizePlayerRowWidths(row, linkInfo);
 
     return trainingCell;
   }
