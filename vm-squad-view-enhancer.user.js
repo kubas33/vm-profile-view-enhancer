@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         VM Squad View Enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.1.6
-// @description  Enhances VM Manager squad view with training bar progress.
+// @version      0.1.7
+// @description  Enhances VM Manager squad view with training progress and position fit.
 // @match        *://*.vm-manager.org/*
 // @grant        none
 // @run-at       document-end
@@ -25,7 +25,9 @@
 
   var STYLE_ID = 'vms-style';
   var HEADER_CLASS = 'vms-training-header';
+  var FIT_HEADER_CLASS = 'vms-fit-header';
   var CELL_CLASS = 'vms-training-cell';
+  var FIT_CELL_CLASS = 'vms-fit-cell';
   var SORTABLE_HEADER_CLASS = 'vms-sortable-header';
   var SORT_MARKER_CLASS = 'vms-sort-marker';
   var BAR_CLASS = 'vms-training-bar';
@@ -34,18 +36,69 @@
   var ENHANCED_TABLE_ATTR = 'data-vms-enhanced-table';
   var SQUAD_SIGNATURE_ATTR = 'data-vms-squad-signature';
   var TRAINING_URL = '/Ajax_handler.php?phpsite=view_body.php&action=Training';
-  var CACHE_KEY = 'vms.trainingPercentMap.v1';
+  var CACHE_KEY = 'vms.trainingPlayerData.v2';
   var CACHE_TTL_MS = 5 * 60 * 1000;
   var COLUMN_WIDTH = 64;
+  var FIT_COLUMN_WIDTH = 58;
+  var MAX_ATTRIBUTE = 50.5;
   var SORT_COLUMNS = {
     'Zawodnik': 'name',
     'Wiek': 'age',
     'Wzrost': 'height',
+    'Przyd.': 'fit',
     'Forma': 'form',
     'Trening': 'training',
     'Doś.': 'experience',
     'Pensja': 'salary',
     'Wartość': 'value'
+  };
+  var POSITION_SHORT_NAMES = {
+    'At': 'Atakujący',
+    'L': 'Libero',
+    'P': 'Przyjmujący',
+    'R': 'Rozgrywający',
+    'Sr': 'Środkowy',
+    'Śr': 'Środkowy'
+  };
+  var ATTRIBUTE_CODES = {
+    UM_SERWIS: 'Serwis',
+    UM_SILA_SERWISU: 'Siła serwisu',
+    UM_PRZYJECIE: 'Przyjęcie',
+    UM_ROZGRYWANIE: 'Rozgrywanie',
+    UM_WYSTAWA: 'Wystawa',
+    UM_ATAK_ZE_SKRZYDLA: 'Atak ze skrzydła',
+    UM_ATAK_ZE_SRODKA: 'Atak ze środka',
+    UM_ATAK_2L: 'Atak z 2 linii',
+    UM_OMIJANIE_BLOKU: 'Omijanie bloku',
+    UM_KIWKA: 'Kiwka',
+    UM_ATAK_BO: 'Atak blok-aut',
+    UM_OBRONA: 'Obrona',
+    UM_ASEKURACJA: 'Asekuracja',
+    UM_BLOK_AKTYWNY: 'Blok',
+    UM_BLOK_PASYWNY: 'Blok pasywny',
+    UM_USTAWIANIE: 'Ustawianie się do bloku'
+  };
+  var POSITION_RULES = {
+    'Atakujący': {
+      primary: ['Ustawianie się do bloku', 'Blok', 'Asekuracja', 'Obrona'],
+      secondary: ['Serwis', 'Atak ze skrzydła', 'Kiwka', 'Atak z 2 linii', 'Omijanie bloku']
+    },
+    'Libero': {
+      primary: ['Przyjęcie', 'Obrona', 'Asekuracja'],
+      secondary: []
+    },
+    'Przyjmujący': {
+      primary: ['Przyjęcie', 'Obrona', 'Asekuracja', 'Ustawianie się do bloku', 'Blok'],
+      secondary: ['Serwis', 'Atak ze skrzydła', 'Kiwka', 'Atak z 2 linii', 'Omijanie bloku']
+    },
+    'Rozgrywający': {
+      primary: ['Rozgrywanie', 'Wystawa', 'Obrona', 'Asekuracja'],
+      secondary: ['Ustawianie się do bloku', 'Blok']
+    },
+    'Środkowy': {
+      primary: ['Atak ze środka', 'Omijanie bloku', 'Ustawianie się do bloku', 'Blok'],
+      secondary: ['Serwis', 'Kiwka']
+    }
   };
 
   var scheduleTimer = null;
@@ -112,15 +165,109 @@
 
   function parseTrainingPercentMapFromHtml(html) {
     var result = {};
-    var regex = /playerId=(\d+)[\s\S]*?&nbsp;\s*(\d+)\s*%/g;
-    var match;
-    var percent;
+    var data = parseTrainingPlayerDataFromHtml(html);
 
-    while ((match = regex.exec(String(html || ''))) !== null) {
-      percent = Number(match[2]);
-      if (!Number.isNaN(percent)) {
-        result[match[1]] = Math.max(0, Math.min(100, percent));
+    Object.keys(data).forEach(function (playerId) {
+      if (data[playerId].trainingPercent !== null) {
+        result[playerId] = data[playerId].trainingPercent;
       }
+    });
+
+    return result;
+  }
+
+  function parseAttributeValue(value) {
+    var match = normalizeText(value).replace(',', '.').match(/-?\d+(?:\.\d+)?/);
+
+    return match ? Number(match[0]) : null;
+  }
+
+  function average(values) {
+    if (!values.length) {
+      return null;
+    }
+
+    return values.reduce(function (sum, value) {
+      return sum + value;
+    }, 0) / values.length;
+  }
+
+  function calculateSummary(position, attributes) {
+    var rules = POSITION_RULES[position];
+    var primary = [];
+    var secondary = [];
+    var weightedSum = 0;
+    var weightTotal = 0;
+
+    if (!rules) {
+      return {
+        primaryAverage: null,
+        secondaryAverage: null,
+        fit: null
+      };
+    }
+
+    rules.primary.forEach(function (name) {
+      if (typeof attributes[name] === 'number') {
+        primary.push(attributes[name]);
+        weightedSum += attributes[name];
+        weightTotal += 1;
+      }
+    });
+
+    rules.secondary.forEach(function (name) {
+      if (typeof attributes[name] === 'number') {
+        secondary.push(attributes[name]);
+        weightedSum += attributes[name] * 0.5;
+        weightTotal += 0.5;
+      }
+    });
+
+    if (primary.length !== rules.primary.length) {
+      weightTotal = 0;
+    }
+
+    return {
+      primaryAverage: average(primary),
+      secondaryAverage: average(secondary),
+      fit: weightTotal > 0 ? (weightedSum / (MAX_ATTRIBUTE * weightTotal)) * 100 : null
+    };
+  }
+
+  function parseTrainingPlayerDataFromHtml(html) {
+    var result = {};
+    var source = String(html || '');
+    var rowRegex = /<tr><td class=(["'])second_left_right\1><\/td>[\s\S]*?Player&playerId=(\d+)[\s\S]*?<\/tr><tr><td class=(["'])second_bottom_left\3>/g;
+    var rowMatch;
+
+    while ((rowMatch = rowRegex.exec(source)) !== null) {
+      var rowHtml = rowMatch[0];
+      var playerId = rowMatch[2];
+      var positionMatch = rowHtml.match(/<font class=green>([^<]+)<\/font>/);
+      var percentMatch = rowHtml.match(/&nbsp;\s*(\d+)\s*%/);
+      var attrRegex = /span_player_value_(UM_[A-Z0-9_]+)[^>]*>[\s\S]*?<font class=['"]?link['"]?>\(([-\d.,]+)\)/g;
+      var attrMatch;
+      var attributes = {};
+      var position = positionMatch ? POSITION_SHORT_NAMES[normalizeText(positionMatch[1])] || '' : '';
+      var trainingPercent = percentMatch ? Number(percentMatch[1]) : null;
+      var summary;
+
+      while ((attrMatch = attrRegex.exec(rowHtml)) !== null) {
+        var name = ATTRIBUTE_CODES[attrMatch[1]];
+        var value = parseAttributeValue(attrMatch[2]);
+
+        if (name && value !== null && !Number.isNaN(value)) {
+          attributes[name] = value;
+        }
+      }
+
+      summary = calculateSummary(position, attributes);
+      result[playerId] = {
+        trainingPercent: trainingPercent === null || Number.isNaN(trainingPercent) ? null : Math.max(0, Math.min(100, trainingPercent)),
+        position: position,
+        attributes: attributes,
+        fitSummary: summary
+      };
     }
 
     return result;
@@ -137,6 +284,9 @@
     style.id = STYLE_ID;
     style.textContent = [
       '.vms-training-header {',
+      '  color: #d7edf8;',
+      '}',
+      '.vms-fit-header {',
       '  color: #d7edf8;',
       '}',
       '.vms-sortable-header {',
@@ -161,6 +311,28 @@
       '  padding-left: 3px;',
       '  padding-right: 3px;',
       '}',
+      '.vms-fit-cell {',
+      '  box-sizing: border-box;',
+      '  white-space: nowrap;',
+      '  padding-left: 3px;',
+      '  padding-right: 3px;',
+      '}',
+      '.vms-fit-value {',
+      '  display: inline-block;',
+      '  min-width: 42px;',
+      '  font-weight: bold;',
+      '  font-size: 10px;',
+      '  line-height: 1;',
+      '  text-align: right;',
+      '}',
+      '.vms-fit-missing {',
+      '  color: #8fa8b8;',
+      '  text-align: center;',
+      '}',
+      '.vms-fit-low { color: #d98b61; }',
+      '.vms-fit-mid { color: #ffd45c; }',
+      '.vms-fit-good { color: #73d87a; }',
+      '.vms-fit-ready { color: #8fd0ff; }',
       '.vms-training-wrap {',
       '  display: inline-flex;',
       '  align-items: center;',
@@ -224,6 +396,19 @@
     return 'vms-training-ready';
   }
 
+  function getFitClass(percent) {
+    if (percent <= 39.9) {
+      return 'vms-fit-low';
+    }
+    if (percent <= 59.9) {
+      return 'vms-fit-mid';
+    }
+    if (percent <= 79.9) {
+      return 'vms-fit-good';
+    }
+    return 'vms-fit-ready';
+  }
+
   function parseNumber(value) {
     var normalized = normalizeText(value)
       .replace(/\u00a0/g, ' ')
@@ -284,6 +469,58 @@
     cell.appendChild(createTrainingContent(cell.ownerDocument, 'loading', null));
   }
 
+  function formatAverage(value) {
+    return value === null ? '--' : value.toFixed(1);
+  }
+
+  function createFitTitle(data) {
+    var summary = data && data.fitSummary ? data.fitSummary : null;
+
+    if (!summary || summary.fit === null) {
+      return '';
+    }
+
+    return [
+      'Kluczowe śr.: ' + formatAverage(summary.primaryAverage),
+      'Drugorzędne śr.: ' + formatAverage(summary.secondaryAverage),
+      'Pozycja: ' + (data.position || '--')
+    ].join(' | ');
+  }
+
+  function setFitCell(cell, data) {
+    var summary = data && data.fitSummary ? data.fitSummary : null;
+    var fit = summary ? summary.fit : null;
+    var value = cell.ownerDocument.createElement('span');
+
+    cell.textContent = '';
+    value.className = 'vms-fit-value';
+
+    if (fit === null || Number.isNaN(fit)) {
+      value.className += ' vms-fit-missing';
+      value.textContent = '--';
+      cell.removeAttribute('title');
+      cell.removeAttribute('data-vms-fit-value');
+    } else {
+      value.className += ' ' + getFitClass(fit);
+      value.textContent = fit.toFixed(1) + '%';
+      cell.setAttribute('title', createFitTitle(data));
+      cell.setAttribute('data-vms-fit-value', String(fit));
+    }
+
+    cell.appendChild(value);
+  }
+
+  function setFitCellLoading(cell) {
+    var value = cell.ownerDocument.createElement('span');
+
+    cell.textContent = '';
+    cell.removeAttribute('title');
+    cell.removeAttribute('data-vms-fit-value');
+    value.className = 'vms-fit-value vms-fit-missing';
+    value.textContent = '...';
+    cell.appendChild(value);
+  }
+
   function getPlayerIdFromRow(row) {
     var links = Array.prototype.slice.call(row.querySelectorAll('[onclick], [OnClick]'));
     var i;
@@ -317,10 +554,18 @@
     return null;
   }
 
-  function incrementTableColspans(table) {
+  function incrementTableColspans(table, targetAmount) {
     var cells;
+    var currentAmount;
+    var diff;
 
-    if (!table || table.getAttribute(ENHANCED_TABLE_ATTR) === '1') {
+    if (!table) {
+      return;
+    }
+
+    currentAmount = Number(table.getAttribute(ENHANCED_TABLE_ATTR)) || 0;
+    diff = targetAmount - currentAmount;
+    if (diff <= 0) {
       return;
     }
 
@@ -328,41 +573,56 @@
     cells.forEach(function (cell) {
       var value = Number(cell.getAttribute('colspan'));
       if (!Number.isNaN(value) && value > 0) {
-        cell.setAttribute('colspan', String(value + 1));
+        cell.setAttribute('colspan', String(value + diff));
       }
     });
 
-    table.setAttribute(ENHANCED_TABLE_ATTR, '1');
+    table.setAttribute(ENHANCED_TABLE_ATTR, String(targetAmount));
   }
 
   function enhanceHeaderRow(row) {
     var cells = Array.prototype.slice.call(row.children);
     var i;
-    var headerCell;
-    var newCell;
+    var formHeaderCell;
+    var heightHeaderCell;
+    var fitCell;
+    var trainingCell;
 
-    if (row.querySelector('.' + HEADER_CLASS)) {
+    if (row.querySelector('.' + HEADER_CLASS) && row.querySelector('.' + FIT_HEADER_CLASS)) {
       return;
     }
 
     for (i = 0; i < cells.length; i += 1) {
       if (normalizeText(cells[i].textContent) === 'Forma') {
-        headerCell = cells[i];
-        break;
+        formHeaderCell = cells[i];
+      } else if (normalizeText(cells[i].textContent) === 'Wzrost') {
+        heightHeaderCell = cells[i];
       }
     }
 
-    if (!headerCell) {
+    if (!formHeaderCell || !heightHeaderCell) {
       return;
     }
 
-    newCell = headerCell.ownerDocument.createElement('td');
-    newCell.className = headerCell.className + ' ' + HEADER_CLASS;
-    newCell.setAttribute('width', String(COLUMN_WIDTH));
-    newCell.setAttribute('align', 'center');
-    newCell.innerHTML = '<b>Trening</b>';
-    headerCell.parentNode.insertBefore(newCell, headerCell.nextSibling);
-    incrementTableColspans(row.closest('table'));
+    if (!row.querySelector('.' + FIT_HEADER_CLASS)) {
+      fitCell = heightHeaderCell.ownerDocument.createElement('td');
+      fitCell.className = heightHeaderCell.className + ' ' + FIT_HEADER_CLASS;
+      fitCell.setAttribute('width', String(FIT_COLUMN_WIDTH));
+      fitCell.setAttribute('align', 'center');
+      fitCell.innerHTML = '<b>Przyd.</b>';
+      heightHeaderCell.parentNode.insertBefore(fitCell, heightHeaderCell.nextSibling);
+    }
+
+    if (!row.querySelector('.' + HEADER_CLASS)) {
+      trainingCell = formHeaderCell.ownerDocument.createElement('td');
+      trainingCell.className = formHeaderCell.className + ' ' + HEADER_CLASS;
+      trainingCell.setAttribute('width', String(COLUMN_WIDTH));
+      trainingCell.setAttribute('align', 'center');
+      trainingCell.innerHTML = '<b>Trening</b>';
+      formHeaderCell.parentNode.insertBefore(trainingCell, formHeaderCell.nextSibling);
+    }
+
+    incrementTableColspans(row.closest('table'), 2);
   }
 
   function getHeaderLabel(cell) {
@@ -442,12 +702,15 @@
   function enhancePlayerRow(row) {
     var existing = row.querySelector('.' + CELL_CLASS);
     var linkInfo;
+    var heightCellIndex;
     var formCellIndex;
+    var heightCell;
     var formCell;
-    var newCell;
+    var fitCell;
+    var trainingCell;
     var playerId;
 
-    if (existing) {
+    if (existing && row.querySelector('.' + FIT_CELL_CLASS)) {
       return existing;
     }
 
@@ -456,24 +719,40 @@
       return null;
     }
 
+    heightCellIndex = linkInfo.index + 4;
     formCellIndex = linkInfo.index + 5;
+    heightCell = row.children[heightCellIndex];
     formCell = row.children[formCellIndex];
-    if (!formCell) {
+    if (!heightCell || !formCell) {
       return null;
     }
 
     playerId = getPlayerIdFromRow(row);
-    newCell = row.ownerDocument.createElement('td');
-    newCell.className = formCell.className + ' ' + CELL_CLASS;
-    newCell.setAttribute('width', String(COLUMN_WIDTH));
-    newCell.setAttribute('align', 'center');
-    newCell.setAttribute('data-vms-player-id', playerId);
-    setTrainingCellLoading(newCell);
+    fitCell = row.querySelector('.' + FIT_CELL_CLASS);
+    if (!fitCell) {
+      fitCell = row.ownerDocument.createElement('td');
+      fitCell.className = heightCell.className + ' ' + FIT_CELL_CLASS;
+      fitCell.setAttribute('width', String(FIT_COLUMN_WIDTH));
+      fitCell.setAttribute('align', 'center');
+      fitCell.setAttribute('data-vms-player-id', playerId);
+      setFitCellLoading(fitCell);
+      heightCell.parentNode.insertBefore(fitCell, heightCell.nextSibling);
+    }
 
-    formCell.parentNode.insertBefore(newCell, formCell.nextSibling);
-    incrementTableColspans(row.closest('table'));
+    trainingCell = row.querySelector('.' + CELL_CLASS);
+    if (!trainingCell) {
+      trainingCell = row.ownerDocument.createElement('td');
+      trainingCell.className = formCell.className + ' ' + CELL_CLASS;
+      trainingCell.setAttribute('width', String(COLUMN_WIDTH));
+      trainingCell.setAttribute('align', 'center');
+      trainingCell.setAttribute('data-vms-player-id', playerId);
+      setTrainingCellLoading(trainingCell);
+      formCell.parentNode.insertBefore(trainingCell, formCell.nextSibling);
+    }
 
-    return newCell;
+    incrementTableColspans(row.closest('table'), 2);
+
+    return trainingCell;
   }
 
   function getCellTextByIndex(row, index) {
@@ -501,8 +780,13 @@
       return parseNumber(getCellTextByIndex(row, linkInfo.index + 4));
     }
 
+    if (sortKey === 'fit') {
+      text = row.querySelector('.' + FIT_CELL_CLASS);
+      return text ? parseNumber(text.getAttribute('data-vms-fit-value')) : null;
+    }
+
     if (sortKey === 'form') {
-      return parseNumber(getCellTextByIndex(row, linkInfo.index + 5));
+      return parseNumber(getCellTextByIndex(row, linkInfo.index + 6));
     }
 
     if (sortKey === 'training') {
@@ -511,15 +795,15 @@
     }
 
     if (sortKey === 'experience') {
-      return parseNumber(getCellTextByIndex(row, linkInfo.index + 7));
-    }
-
-    if (sortKey === 'salary') {
       return parseNumber(getCellTextByIndex(row, linkInfo.index + 8));
     }
 
+    if (sortKey === 'salary') {
+      return parseNumber(getCellTextByIndex(row, linkInfo.index + 9));
+    }
+
     if (sortKey === 'value') {
-      value = parseNumber(getCellTextByIndex(row, linkInfo.index + 9));
+      value = parseNumber(getCellTextByIndex(row, linkInfo.index + 10));
       return value;
     }
 
@@ -692,7 +976,7 @@
       return response.text();
     }).then(function (text) {
       var html = extractVmBody(text);
-      var values = parseTrainingPercentMapFromHtml(html);
+      var values = parseTrainingPlayerDataFromHtml(html);
 
       trainingState.status = 'loaded';
       trainingState.values = values;
@@ -711,20 +995,33 @@
   }
 
   function applyTrainingValues(values) {
-    var cells = Array.prototype.slice.call(root.document.querySelectorAll('.' + CELL_CLASS));
+    var trainingCells = Array.prototype.slice.call(root.document.querySelectorAll('.' + CELL_CLASS));
+    var fitCells = Array.prototype.slice.call(root.document.querySelectorAll('.' + FIT_CELL_CLASS));
 
-    cells.forEach(function (cell) {
+    trainingCells.forEach(function (cell) {
       var playerId = cell.getAttribute('data-vms-player-id');
-      var percent = values && Object.prototype.hasOwnProperty.call(values, playerId) ? values[playerId] : null;
+      var data = values && Object.prototype.hasOwnProperty.call(values, playerId) ? values[playerId] : null;
+      var percent = data ? data.trainingPercent : null;
       setTrainingCell(cell, percent);
+    });
+
+    fitCells.forEach(function (cell) {
+      var playerId = cell.getAttribute('data-vms-player-id');
+      var data = values && Object.prototype.hasOwnProperty.call(values, playerId) ? values[playerId] : null;
+      setFitCell(cell, data);
     });
   }
 
   function applyTrainingError() {
-    var cells = Array.prototype.slice.call(root.document.querySelectorAll('.' + CELL_CLASS));
+    var trainingCells = Array.prototype.slice.call(root.document.querySelectorAll('.' + CELL_CLASS));
+    var fitCells = Array.prototype.slice.call(root.document.querySelectorAll('.' + FIT_CELL_CLASS));
 
-    cells.forEach(function (cell) {
+    trainingCells.forEach(function (cell) {
       setTrainingCell(cell, null);
+    });
+
+    fitCells.forEach(function (cell) {
+      setFitCell(cell, null);
     });
   }
 
@@ -742,7 +1039,8 @@
     signature = createSquadSignature(playerRows);
 
     if (documentRef.body.getAttribute(SQUAD_SIGNATURE_ATTR) === signature &&
-      Array.prototype.slice.call(documentRef.querySelectorAll('.' + CELL_CLASS)).length >= playerRows.length) {
+      Array.prototype.slice.call(documentRef.querySelectorAll('.' + CELL_CLASS)).length >= playerRows.length &&
+      Array.prototype.slice.call(documentRef.querySelectorAll('.' + FIT_CELL_CLASS)).length >= playerRows.length) {
       if (trainingState.status === 'loaded') {
         applyTrainingValues(trainingState.values);
       }
@@ -782,7 +1080,9 @@
   }
 
   return {
+    calculateSummary: calculateSummary,
     extractVmBody: extractVmBody,
+    parseTrainingPlayerDataFromHtml: parseTrainingPlayerDataFromHtml,
     parseSquadPlayerIdsFromHtml: parseSquadPlayerIdsFromHtml,
     parseTrainingPercentMapFromHtml: parseTrainingPercentMapFromHtml,
     start: start
