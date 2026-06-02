@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VM Squad View Enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.1.0
+// @version      0.1.5
 // @description  Enhances VM Manager squad view with training bar progress.
 // @match        *://*.vm-manager.org/*
 // @grant        none
@@ -26,6 +26,8 @@
   var STYLE_ID = 'vms-style';
   var HEADER_CLASS = 'vms-training-header';
   var CELL_CLASS = 'vms-training-cell';
+  var SORTABLE_HEADER_CLASS = 'vms-sortable-header';
+  var SORT_MARKER_CLASS = 'vms-sort-marker';
   var BAR_CLASS = 'vms-training-bar';
   var FILL_CLASS = 'vms-training-fill';
   var TEXT_CLASS = 'vms-training-text';
@@ -35,6 +37,16 @@
   var CACHE_KEY = 'vms.trainingPercentMap.v1';
   var CACHE_TTL_MS = 5 * 60 * 1000;
   var COLUMN_WIDTH = 64;
+  var SORT_COLUMNS = {
+    'Zawodnik': 'name',
+    'Wiek': 'age',
+    'Wzrost': 'height',
+    'Forma': 'form',
+    'Trening': 'training',
+    'Doś.': 'experience',
+    'Pensja': 'salary',
+    'Wartość': 'value'
+  };
 
   var scheduleTimer = null;
   var trainingPromise = null;
@@ -127,6 +139,22 @@
       '.vms-training-header {',
       '  color: #d7edf8;',
       '}',
+      '.vms-sortable-header {',
+      '  cursor: pointer;',
+      '  user-select: none;',
+      '}',
+      '.vms-sortable-header:hover {',
+      '  color: #ffffff;',
+      '}',
+      '.vms-sort-marker {',
+      '  display: inline-block;',
+      '  width: 8px;',
+      '  margin-left: 2px;',
+      '  color: #8fd0ff;',
+      '  font-size: 9px;',
+      '  line-height: 1;',
+      '  text-align: left;',
+      '}',
       '.vms-training-cell {',
       '  box-sizing: border-box;',
       '  white-space: nowrap;',
@@ -194,6 +222,24 @@
       return 'vms-training-good';
     }
     return 'vms-training-ready';
+  }
+
+  function parseNumber(value) {
+    var normalized = normalizeText(value)
+      .replace(/\u00a0/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/[^\d,.-]/g, '')
+      .replace(/\s+/g, '')
+      .replace(',', '.');
+    var number;
+
+    if (!/\d/.test(normalized)) {
+      return null;
+    }
+
+    number = Number(normalized);
+
+    return Number.isNaN(number) ? null : number;
   }
 
   function createTrainingContent(documentRef, state, percent) {
@@ -319,6 +365,55 @@
     incrementTableColspans(row.closest('table'));
   }
 
+  function getHeaderLabel(cell) {
+    return normalizeText(cell.textContent).replace(/\s+[v^]$/, '');
+  }
+
+  function ensureSortMarker(cell) {
+    var marker = cell.querySelector('.' + SORT_MARKER_CLASS);
+
+    if (!marker) {
+      marker = cell.ownerDocument.createElement('span');
+      marker.className = SORT_MARKER_CLASS;
+      marker.setAttribute('aria-hidden', 'true');
+      cell.appendChild(marker);
+    }
+
+    return marker;
+  }
+
+  function updateSortMarkers(documentRef, activeKey, direction) {
+    var headers = Array.prototype.slice.call(documentRef.querySelectorAll('.' + SORTABLE_HEADER_CLASS));
+
+    headers.forEach(function (header) {
+      var marker = ensureSortMarker(header);
+      marker.textContent = header.getAttribute('data-vms-sort-key') === activeKey ? (direction === 'asc' ? '^' : 'v') : '';
+    });
+  }
+
+  function enableHeaderSorting(row) {
+    var cells = Array.prototype.slice.call(row.children);
+
+    cells.forEach(function (cell) {
+      var label = getHeaderLabel(cell);
+      var sortKey = SORT_COLUMNS[label];
+
+      if (!sortKey || cell.getAttribute('data-vms-sort-ready') === '1') {
+        return;
+      }
+
+      cell.className += ' ' + SORTABLE_HEADER_CLASS;
+      cell.setAttribute('data-vms-sort-ready', '1');
+      cell.setAttribute('data-vms-sort-key', sortKey);
+      cell.setAttribute('title', 'Sortuj po: ' + label);
+      ensureSortMarker(cell);
+
+      cell.addEventListener('click', function () {
+        sortSquadBy(sortKey, cell.ownerDocument);
+      });
+    });
+  }
+
   function findHeaderRows(documentRef) {
     var rows = Array.prototype.slice.call(documentRef.querySelectorAll('tr'));
 
@@ -379,6 +474,147 @@
     incrementTableColspans(row.closest('table'));
 
     return newCell;
+  }
+
+  function getCellTextByIndex(row, index) {
+    return row.children[index] ? normalizeText(row.children[index].textContent) : '';
+  }
+
+  function getSortValue(row, sortKey) {
+    var linkInfo = findPlayerLinkCell(row);
+    var text;
+    var value;
+
+    if (!linkInfo) {
+      return null;
+    }
+
+    if (sortKey === 'name') {
+      return getCellTextByIndex(row, linkInfo.index).toLocaleLowerCase();
+    }
+
+    if (sortKey === 'age') {
+      return parseNumber(getCellTextByIndex(row, linkInfo.index + 3));
+    }
+
+    if (sortKey === 'height') {
+      return parseNumber(getCellTextByIndex(row, linkInfo.index + 4));
+    }
+
+    if (sortKey === 'form') {
+      return parseNumber(getCellTextByIndex(row, linkInfo.index + 5));
+    }
+
+    if (sortKey === 'training') {
+      text = row.querySelector('.' + CELL_CLASS + ' .' + TEXT_CLASS);
+      return text ? parseNumber(text.textContent) : null;
+    }
+
+    if (sortKey === 'experience') {
+      return parseNumber(getCellTextByIndex(row, linkInfo.index + 7));
+    }
+
+    if (sortKey === 'salary') {
+      return parseNumber(getCellTextByIndex(row, linkInfo.index + 8));
+    }
+
+    if (sortKey === 'value') {
+      value = parseNumber(getCellTextByIndex(row, linkInfo.index + 9));
+      return value;
+    }
+
+    return null;
+  }
+
+  function getPlayerBlock(row) {
+    var innerTable = row.closest('table');
+    var tableCell = innerTable ? innerTable.parentNode : null;
+    var blockRow = tableCell && tableCell.tagName && tableCell.tagName.toLowerCase() === 'td' ? tableCell.parentNode : null;
+    var spacerRow = blockRow ? blockRow.nextElementSibling : null;
+
+    if (!blockRow || !blockRow.parentNode || blockRow.tagName.toLowerCase() !== 'tr') {
+      return null;
+    }
+
+    if (spacerRow && spacerRow.tagName.toLowerCase() === 'tr' && !getPlayerIdFromRow(spacerRow)) {
+      return {
+        row: row,
+        blockRow: blockRow,
+        spacerRow: spacerRow
+      };
+    }
+
+    return {
+      row: row,
+      blockRow: blockRow,
+      spacerRow: null
+    };
+  }
+
+  function compareSortValues(left, right, direction) {
+    var multiplier = direction === 'asc' ? 1 : -1;
+
+    if (left.value === null && right.value === null) {
+      return left.index - right.index;
+    }
+    if (left.value === null) {
+      return 1;
+    }
+    if (right.value === null) {
+      return -1;
+    }
+    if (typeof left.value === 'string' || typeof right.value === 'string') {
+      return String(left.value).localeCompare(String(right.value), 'pl') * multiplier || left.index - right.index;
+    }
+    if (left.value === right.value) {
+      return left.index - right.index;
+    }
+
+    return (left.value - right.value) * multiplier;
+  }
+
+  function sortSquadBy(sortKey, documentRef) {
+    var rows = findSquadPlayerRows(documentRef);
+    var currentKey = documentRef.body.getAttribute('data-vms-sort-key');
+    var currentDirection = documentRef.body.getAttribute('data-vms-sort-direction') || 'desc';
+    var nextDirection = currentKey === sortKey && currentDirection === 'desc' ? 'asc' : 'desc';
+    var blocks;
+    var parent;
+
+    blocks = rows.map(function (row, index) {
+      var block = getPlayerBlock(row);
+
+      if (!block) {
+        return null;
+      }
+
+      return {
+        index: index,
+        value: getSortValue(row, sortKey),
+        block: block
+      };
+    }).filter(Boolean);
+
+    if (!blocks.length) {
+      return;
+    }
+
+    parent = blocks[0].block.blockRow.parentNode;
+    blocks.sort(function (left, right) {
+      return compareSortValues(left, right, nextDirection);
+    });
+
+    blocks.forEach(function (item) {
+      parent.appendChild(item.block.blockRow);
+      if (item.block.spacerRow) {
+        parent.appendChild(item.block.spacerRow);
+      }
+    });
+
+    documentRef.body.setAttribute('data-vms-sort-key', sortKey);
+    documentRef.body.setAttribute('data-vms-sort-direction', nextDirection);
+    documentRef.body.removeAttribute(SQUAD_SIGNATURE_ATTR);
+    updateSortMarkers(documentRef, sortKey, nextDirection);
   }
 
   function createSquadSignature(rows) {
@@ -506,7 +742,7 @@
     signature = createSquadSignature(playerRows);
 
     if (documentRef.body.getAttribute(SQUAD_SIGNATURE_ATTR) === signature &&
-        Array.prototype.slice.call(documentRef.querySelectorAll('.' + CELL_CLASS)).length >= playerRows.length) {
+      Array.prototype.slice.call(documentRef.querySelectorAll('.' + CELL_CLASS)).length >= playerRows.length) {
       if (trainingState.status === 'loaded') {
         applyTrainingValues(trainingState.values);
       }
@@ -514,6 +750,7 @@
     }
 
     headerRows.forEach(enhanceHeaderRow);
+    headerRows.forEach(enableHeaderSorting);
     playerRows.forEach(enhancePlayerRow);
     documentRef.body.setAttribute(SQUAD_SIGNATURE_ATTR, signature);
 
