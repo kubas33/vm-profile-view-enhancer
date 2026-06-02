@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VM Profile View Enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.1.1
+// @version      0.1.2
 // @description  Enhances VM Manager player profile attributes with position-aware markers and summary.
 // @match        *://*.vm-manager.org/*
 // @grant        none
@@ -157,6 +157,9 @@
       '.vmp-row-secondary td {',
       '  background: rgba(99, 183, 255, 0.10);',
       '}',
+      '.vmp-row-other td {',
+      '  opacity: 0.76;',
+      '}',
       '.vmp-marker {',
       '  display: inline-block;',
       '  width: 12px;',
@@ -169,6 +172,9 @@
       '}',
       '.vmp-marker-secondary {',
       '  color: #8fd0ff;',
+      '}',
+      '.vmp-marker-placeholder {',
+      '  visibility: hidden;',
       '}',
       '.vmp-value {',
       '  font-weight: bold;',
@@ -277,7 +283,7 @@
     var markers = Array.prototype.slice.call(container.querySelectorAll('.' + ICON_CLASS));
     var panelRows = Array.prototype.slice.call(container.querySelectorAll('.vmp-panel-row'));
     var panels = Array.prototype.slice.call(container.querySelectorAll('.' + PANEL_CLASS));
-    var enhancedRows = Array.prototype.slice.call(container.querySelectorAll('.vmp-row-primary, .vmp-row-secondary'));
+    var enhancedRows = Array.prototype.slice.call(container.querySelectorAll('.vmp-row-primary, .vmp-row-secondary, .vmp-row-other'));
     var enhancedValues = Array.prototype.slice.call(container.querySelectorAll('.vmp-value'));
     var gradeClasses = [
       'vmp-grade-very-weak',
@@ -301,7 +307,7 @@
     });
 
     enhancedRows.forEach(function (row) {
-      row.classList.remove('vmp-row-primary', 'vmp-row-secondary');
+      row.classList.remove('vmp-row-primary', 'vmp-row-secondary', 'vmp-row-other');
     });
 
     enhancedValues.forEach(function (cell) {
@@ -324,13 +330,18 @@
   function addMarker(nameCell, importance) {
     var marker;
 
-    if (importance !== 'primary' && importance !== 'secondary') {
-      return;
-    }
-
     marker = document.createElement('span');
-    marker.className = ICON_CLASS + ' vmp-marker-' + importance;
-    marker.textContent = importance === 'primary' ? '★' : '•';
+    marker.className = ICON_CLASS;
+    if (importance === 'primary') {
+      marker.className += ' vmp-marker-primary';
+      marker.textContent = '★';
+    } else if (importance === 'secondary') {
+      marker.className += ' vmp-marker-secondary';
+      marker.textContent = '•';
+    } else {
+      marker.className += ' vmp-marker-placeholder';
+      marker.textContent = '•';
+    }
     marker.setAttribute('aria-hidden', 'true');
     nameCell.insertBefore(marker, nameCell.firstChild);
   }
@@ -484,6 +495,8 @@
         attribute.row.classList.add('vmp-row-primary');
       } else if (importance === 'secondary') {
         attribute.row.classList.add('vmp-row-secondary');
+      } else {
+        attribute.row.classList.add('vmp-row-other');
       }
 
       addMarker(attribute.nameCell, importance);
