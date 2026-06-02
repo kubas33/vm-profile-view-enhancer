@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VM Squad View Enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.1.8
+// @version      0.1.9
 // @description  Enhances VM Manager squad view with training progress and position fit.
 // @match        *://*.vm-manager.org/*
 // @grant        none
@@ -28,7 +28,7 @@
   var FIT_HEADER_CLASS = 'vms-fit-header';
   var CELL_CLASS = 'vms-training-cell';
   var FIT_CELL_CLASS = 'vms-fit-cell';
-  var FILTER_ROW_CLASS = 'vms-filter-row';
+  var FILTER_PANEL_CLASS = 'vms-filter-panel';
   var FILTER_CHECKBOX_CLASS = 'vms-position-filter';
   var FILTER_RESET_CLASS = 'vms-filter-reset';
   var SORTABLE_HEADER_CLASS = 'vms-sortable-header';
@@ -317,12 +317,18 @@
       '}',
       '.vms-training-cell {',
       '  box-sizing: border-box;',
+      '  width: 64px;',
+      '  min-width: 64px;',
+      '  max-width: 64px;',
       '  white-space: nowrap;',
       '  padding-left: 3px;',
       '  padding-right: 3px;',
       '}',
       '.vms-fit-cell {',
       '  box-sizing: border-box;',
+      '  width: 58px;',
+      '  min-width: 58px;',
+      '  max-width: 58px;',
       '  white-space: nowrap;',
       '  padding-left: 3px;',
       '  padding-right: 3px;',
@@ -343,8 +349,10 @@
       '.vms-fit-mid { color: #ffd45c; }',
       '.vms-fit-good { color: #73d87a; }',
       '.vms-fit-ready { color: #8fd0ff; }',
-      '.vms-filter-row td {',
+      '.vms-filter-panel {',
+      '  margin: 0 0 2px 0;',
       '  padding: 5px 8px;',
+      '  box-sizing: border-box;',
       '}',
       '.vms-filter-bar {',
       '  display: flex;',
@@ -698,32 +706,35 @@
     return label;
   }
 
-  function enhanceFilterRow(headerRow) {
+  function enhanceFilterPanel(headerRow) {
     var documentRef = headerRow.ownerDocument;
-    var existing = headerRow.parentNode.querySelector('.' + FILTER_ROW_CLASS);
-    var row;
-    var cell;
+    var table = headerRow.closest('table');
+    var parent = table ? table.parentNode : null;
+    var oldRow = headerRow.parentNode.querySelector('.vms-filter-row');
+    var existing = parent ? parent.querySelector('.' + FILTER_PANEL_CLASS) : null;
+    var panel;
     var bar;
     var title;
     var reset;
 
+    if (oldRow) {
+      oldRow.remove();
+    }
+
     if (existing) {
-      cell = existing.children[0];
-      if (cell) {
-        cell.setAttribute('colspan', String(headerRow.children.length));
-      }
       return;
     }
 
-    row = documentRef.createElement('tr');
-    cell = documentRef.createElement('td');
+    if (!parent || !table) {
+      return;
+    }
+
+    panel = documentRef.createElement('div');
     bar = documentRef.createElement('span');
     title = documentRef.createElement('span');
     reset = documentRef.createElement('button');
 
-    row.className = FILTER_ROW_CLASS;
-    cell.className = headerRow.children[0] ? headerRow.children[0].className : '';
-    cell.setAttribute('colspan', String(headerRow.children.length));
+    panel.className = FILTER_PANEL_CLASS;
     bar.className = 'vms-filter-bar';
     title.className = 'vms-filter-title';
     title.textContent = 'Pozycja:';
@@ -742,9 +753,8 @@
       bar.appendChild(createPositionFilterControl(documentRef, item));
     });
     bar.appendChild(reset);
-    cell.appendChild(bar);
-    row.appendChild(cell);
-    headerRow.parentNode.insertBefore(row, headerRow);
+    panel.appendChild(bar);
+    parent.insertBefore(panel, table);
   }
 
   function enhanceHeaderRow(row) {
@@ -756,7 +766,7 @@
     var trainingCell;
 
     if (row.querySelector('.' + HEADER_CLASS) && row.querySelector('.' + FIT_HEADER_CLASS)) {
-      enhanceFilterRow(row);
+      enhanceFilterPanel(row);
       return;
     }
 
@@ -791,7 +801,7 @@
     }
 
     incrementTableColspans(row.closest('table'), 2);
-    enhanceFilterRow(row);
+    enhanceFilterPanel(row);
   }
 
   function getHeaderLabel(cell) {
