@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VM Squad View Enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.1.11
+// @version      0.1.12
 // @description  Enhances VM Manager squad view with training progress and position fit.
 // @match        *://*.vm-manager.org/*
 // @grant        none
@@ -843,9 +843,9 @@
       } else if (label === 'Doś.') {
         setCellWidth(cell, DATA_COLUMN_WIDTHS.experience, 'center');
       } else if (label === 'Pensja') {
-        setCellWidth(cell, DATA_COLUMN_WIDTHS.salary, 'center');
+        setCellWidth(cell, DATA_COLUMN_WIDTHS.salary, 'right');
       } else if (label === 'Wartość') {
-        setCellWidth(cell, DATA_COLUMN_WIDTHS.value, 'center');
+        setCellWidth(cell, DATA_COLUMN_WIDTHS.value, 'right');
       }
     });
   }
