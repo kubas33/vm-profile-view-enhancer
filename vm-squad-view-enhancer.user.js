@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VM Squad View Enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.1.7
+// @version      0.1.8
 // @description  Enhances VM Manager squad view with training progress and position fit.
 // @match        *://*.vm-manager.org/*
 // @grant        none
@@ -28,6 +28,9 @@
   var FIT_HEADER_CLASS = 'vms-fit-header';
   var CELL_CLASS = 'vms-training-cell';
   var FIT_CELL_CLASS = 'vms-fit-cell';
+  var FILTER_ROW_CLASS = 'vms-filter-row';
+  var FILTER_CHECKBOX_CLASS = 'vms-position-filter';
+  var FILTER_RESET_CLASS = 'vms-filter-reset';
   var SORTABLE_HEADER_CLASS = 'vms-sortable-header';
   var SORT_MARKER_CLASS = 'vms-sort-marker';
   var BAR_CLASS = 'vms-training-bar';
@@ -60,6 +63,13 @@
     'Sr': 'Środkowy',
     'Śr': 'Środkowy'
   };
+  var POSITION_FILTERS = [
+    { shortName: 'At', label: 'At' },
+    { shortName: 'P', label: 'P' },
+    { shortName: 'R', label: 'R' },
+    { shortName: 'Śr', label: 'Śr' },
+    { shortName: 'L', label: 'L' }
+  ];
   var ATTRIBUTE_CODES = {
     UM_SERWIS: 'Serwis',
     UM_SILA_SERWISU: 'Siła serwisu',
@@ -333,6 +343,43 @@
       '.vms-fit-mid { color: #ffd45c; }',
       '.vms-fit-good { color: #73d87a; }',
       '.vms-fit-ready { color: #8fd0ff; }',
+      '.vms-filter-row td {',
+      '  padding: 5px 8px;',
+      '}',
+      '.vms-filter-bar {',
+      '  display: flex;',
+      '  align-items: center;',
+      '  gap: 6px;',
+      '  flex-wrap: wrap;',
+      '  color: #d7edf8;',
+      '  font-size: 11px;',
+      '}',
+      '.vms-filter-title {',
+      '  color: #9fb8c7;',
+      '  margin-right: 2px;',
+      '}',
+      '.vms-filter-chip {',
+      '  display: inline-flex;',
+      '  align-items: center;',
+      '  gap: 3px;',
+      '  padding: 2px 5px;',
+      '  border: 1px solid rgba(80, 156, 202, 0.45);',
+      '  background: rgba(1, 18, 28, 0.42);',
+      '  cursor: pointer;',
+      '  user-select: none;',
+      '}',
+      '.vms-filter-chip input {',
+      '  margin: 0;',
+      '}',
+      '.vms-filter-reset {',
+      '  margin-left: 4px;',
+      '  padding: 2px 6px;',
+      '  border: 1px solid rgba(80, 156, 202, 0.45);',
+      '  background: rgba(7, 31, 48, 0.72);',
+      '  color: #d7edf8;',
+      '  font-size: 11px;',
+      '  cursor: pointer;',
+      '}',
       '.vms-training-wrap {',
       '  display: inline-flex;',
       '  align-items: center;',
@@ -554,6 +601,18 @@
     return null;
   }
 
+  function normalizePositionShort(value) {
+    var normalized = normalizeText(value);
+
+    return normalized === 'Sr' ? 'Śr' : normalized;
+  }
+
+  function getPositionShortFromRow(row) {
+    var marker = row.querySelector('font.green, .green');
+
+    return marker ? normalizePositionShort(marker.textContent) : '';
+  }
+
   function incrementTableColspans(table, targetAmount) {
     var cells;
     var currentAmount;
@@ -580,6 +639,114 @@
     table.setAttribute(ENHANCED_TABLE_ATTR, String(targetAmount));
   }
 
+  function getActivePositionFilters(documentRef) {
+    var checkboxes = Array.prototype.slice.call(documentRef.querySelectorAll('.' + FILTER_CHECKBOX_CLASS));
+    var active = {};
+
+    checkboxes.forEach(function (checkbox) {
+      if (checkbox.checked) {
+        active[checkbox.value] = true;
+      }
+    });
+
+    return active;
+  }
+
+  function applyPositionFilter(documentRef) {
+    var active = getActivePositionFilters(documentRef);
+    var rows = findSquadPlayerRows(documentRef);
+
+    rows.forEach(function (row) {
+      var block = getPlayerBlock(row);
+      var position = row.getAttribute('data-vms-position-short') || getPositionShortFromRow(row);
+      var visible = Boolean(active[position]);
+
+      if (!block) {
+        return;
+      }
+
+      block.blockRow.style.display = visible ? '' : 'none';
+      if (block.spacerRow) {
+        block.spacerRow.style.display = visible ? '' : 'none';
+      }
+    });
+  }
+
+  function createPositionFilterControl(documentRef, item) {
+    var label = documentRef.createElement('label');
+    var input = documentRef.createElement('input');
+    var text = documentRef.createElement('span');
+
+    label.className = 'vms-filter-chip';
+    input.className = FILTER_CHECKBOX_CLASS;
+    input.type = 'checkbox';
+    input.value = item.shortName;
+    input.checked = true;
+    text.textContent = item.label;
+    input.addEventListener('change', function () {
+      Array.prototype.slice.call(documentRef.querySelectorAll('.' + FILTER_CHECKBOX_CLASS)).forEach(function (checkbox) {
+        if (checkbox.value === input.value) {
+          checkbox.checked = input.checked;
+        }
+      });
+      applyPositionFilter(documentRef);
+    });
+
+    label.appendChild(input);
+    label.appendChild(text);
+
+    return label;
+  }
+
+  function enhanceFilterRow(headerRow) {
+    var documentRef = headerRow.ownerDocument;
+    var existing = headerRow.parentNode.querySelector('.' + FILTER_ROW_CLASS);
+    var row;
+    var cell;
+    var bar;
+    var title;
+    var reset;
+
+    if (existing) {
+      cell = existing.children[0];
+      if (cell) {
+        cell.setAttribute('colspan', String(headerRow.children.length));
+      }
+      return;
+    }
+
+    row = documentRef.createElement('tr');
+    cell = documentRef.createElement('td');
+    bar = documentRef.createElement('span');
+    title = documentRef.createElement('span');
+    reset = documentRef.createElement('button');
+
+    row.className = FILTER_ROW_CLASS;
+    cell.className = headerRow.children[0] ? headerRow.children[0].className : '';
+    cell.setAttribute('colspan', String(headerRow.children.length));
+    bar.className = 'vms-filter-bar';
+    title.className = 'vms-filter-title';
+    title.textContent = 'Pozycja:';
+    reset.className = FILTER_RESET_CLASS;
+    reset.type = 'button';
+    reset.textContent = 'Reset';
+    reset.addEventListener('click', function () {
+      Array.prototype.slice.call(documentRef.querySelectorAll('.' + FILTER_CHECKBOX_CLASS)).forEach(function (checkbox) {
+        checkbox.checked = true;
+      });
+      applyPositionFilter(documentRef);
+    });
+
+    bar.appendChild(title);
+    POSITION_FILTERS.forEach(function (item) {
+      bar.appendChild(createPositionFilterControl(documentRef, item));
+    });
+    bar.appendChild(reset);
+    cell.appendChild(bar);
+    row.appendChild(cell);
+    headerRow.parentNode.insertBefore(row, headerRow);
+  }
+
   function enhanceHeaderRow(row) {
     var cells = Array.prototype.slice.call(row.children);
     var i;
@@ -589,6 +756,7 @@
     var trainingCell;
 
     if (row.querySelector('.' + HEADER_CLASS) && row.querySelector('.' + FIT_HEADER_CLASS)) {
+      enhanceFilterRow(row);
       return;
     }
 
@@ -623,6 +791,7 @@
     }
 
     incrementTableColspans(row.closest('table'), 2);
+    enhanceFilterRow(row);
   }
 
   function getHeaderLabel(cell) {
@@ -710,13 +879,15 @@
     var trainingCell;
     var playerId;
 
-    if (existing && row.querySelector('.' + FIT_CELL_CLASS)) {
-      return existing;
-    }
-
     linkInfo = findPlayerLinkCell(row);
     if (!linkInfo) {
       return null;
+    }
+
+    row.setAttribute('data-vms-position-short', getPositionShortFromRow(row));
+
+    if (existing && row.querySelector('.' + FIT_CELL_CLASS)) {
+      return existing;
     }
 
     heightCellIndex = linkInfo.index + 4;
@@ -899,6 +1070,7 @@
     documentRef.body.setAttribute('data-vms-sort-direction', nextDirection);
     documentRef.body.removeAttribute(SQUAD_SIGNATURE_ATTR);
     updateSortMarkers(documentRef, sortKey, nextDirection);
+    applyPositionFilter(documentRef);
   }
 
   function createSquadSignature(rows) {
@@ -1044,6 +1216,7 @@
       if (trainingState.status === 'loaded') {
         applyTrainingValues(trainingState.values);
       }
+      applyPositionFilter(documentRef);
       return;
     }
 
@@ -1051,6 +1224,7 @@
     headerRows.forEach(enableHeaderSorting);
     playerRows.forEach(enhancePlayerRow);
     documentRef.body.setAttribute(SQUAD_SIGNATURE_ATTR, signature);
+    applyPositionFilter(documentRef);
 
     fetchTrainingValues().then(applyTrainingValues).catch(applyTrainingError);
   }
