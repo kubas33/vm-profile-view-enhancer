@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Volleyball Bulk Change Add
 // @namespace    https://vm-manager.org/
-// @version      0.1.0
+// @version      0.1.1
 // @description  Enhances VM Manager tactic changes view with bulk change add functionality.
 // @match        *://*.vm-manager.org/*
 // @grant        none
@@ -296,10 +296,10 @@
     const title = document.createElement('b');
     title.textContent = 'Masowe dodawanie zmian z bieżącymi regułami';
 
-    const routeInfo = document.createElement('div');
-    routeInfo.style.marginTop = '6px';
-    routeInfo.style.color = '#facc15';
-    routeInfo.textContent = `Zapis do: action=${route.action}, type=${route.type}`;
+    // const routeInfo = document.createElement('div');
+    // routeInfo.style.marginTop = '6px';
+    // routeInfo.style.color = '#facc15';
+    // routeInfo.textContent = `Zapis do: action=${route.action}, type=${route.type}`;
 
     const hint = document.createElement('div');
     hint.textContent = 'Reguły poniżej działają jako szablon dla wszystkich par.';
@@ -401,7 +401,7 @@
       }
     });
 
-    panel.append(title, routeInfo, hint, optionsRow, list, buttons);
+    panel.append(title, hint, optionsRow, list, buttons);
 
     createPairRow(list);
 
