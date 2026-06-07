@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         Volleyball training view enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.2.0
+// @version      0.2.1
 // @description  Highlights risky and wasteful training choices in senior and junior training views.
 // @match        *://*.vm-manager.org/*
+// @match        *://vm-manager.org/*
 // @updateURL    https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-training-view-engancer.user.js
 // @downloadURL  https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-training-view-engancer.user.js
 // @run-at       document-end

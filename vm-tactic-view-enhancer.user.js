@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         VM Tactic View Enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.1.6
+// @version      0.1.7
 // @description  Enhances VM Manager tactic view with match-day training progress warnings.
 // @match        *://*.vm-manager.org/*
+// @match        *://vm-manager.org/*
 // @grant        none
 // @run-at       document-end
 // @updateURL    https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-tactic-view-enhancer.user.js

@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         Volleyball Bulk Change Add
 // @namespace    https://vm-manager.org/
-// @version      0.1.1
+// @version      0.1.2
 // @description  Enhances VM Manager tactic changes view with bulk change add functionality.
 // @match        *://*.vm-manager.org/*
+// @match        *://vm-manager.org/*
 // @grant        none
 // @run-at       document-end
 // @updateURL    https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-tactic-changes-view-enhancer.user.js
