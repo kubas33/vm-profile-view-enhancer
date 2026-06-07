@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Volleyball Bulk Change Add
 // @namespace    https://vm-manager.org/
-// @version      0.2.0
+// @version      0.2.1
 // @description  Enhances VM Manager tactic changes view with bulk change add functionality.
 // @match        *://*.vm-manager.org/*
 // @match        *://vm-manager.org/*
@@ -38,7 +38,15 @@
   }
 
   function getSaveOnclick() {
-    return dom.queryVisibleAll(document, 'span.link')
+    const visible = dom.queryVisibleAll(document, 'span.link')
+      .map(getOnClick)
+      .find(text => text.includes('PlayersChangeAdd'));
+
+    if (visible) {
+      return visible;
+    }
+
+    return [...document.querySelectorAll('span.link')]
       .map(getOnClick)
       .find(text => text.includes('PlayersChangeAdd')) || '';
   }
@@ -60,18 +68,42 @@
   function isChangeAddView() {
     const route = getNativeRoute();
 
-    return route.changeId === '0' &&
+    if (route.changeId !== '0' || !getSaveOnclick().includes('PlayersChangeAdd')) {
+      return false;
+    }
+
+    if (dom.getVisibleElementById(document, PANEL_ID)) {
+      return true;
+    }
+
+    return Boolean(
       dom.getVisibleElementById(document, 'player_out') &&
-      dom.getVisibleElementById(document, 'player_in') &&
-      getSaveOnclick().includes('PlayersChangeAdd');
+      dom.getVisibleElementById(document, 'player_in')
+    );
+  }
+
+  function readFieldValue(id, fallback = '0') {
+    const visible = dom.getVisibleElementById(document, id);
+    if (visible) {
+      return visible.value ?? fallback;
+    }
+
+    const nodes = dom.getElementsById(document, id);
+    return nodes[0]?.value ?? fallback;
   }
 
   function val(id, fallback = '0') {
-    return dom.getVisibleElementById(document, id)?.value ?? fallback;
+    return readFieldValue(id, fallback);
   }
 
   function radio(name, fallback = '0') {
-    return dom.queryVisibleFirst(document, `input[name="${name}"]:checked`)?.value ?? fallback;
+    const visible = dom.queryVisibleFirst(document, `input[name="${name}"]:checked`);
+    if (visible) {
+      return visible.value ?? fallback;
+    }
+
+    const checked = document.querySelector(`input[name="${name}"]:checked`);
+    return checked?.value ?? fallback;
   }
 
   function readSetPicker(selector) {
@@ -144,8 +176,12 @@
     return `/Ajax_handler.php?${params.toString()}`;
   }
 
+  function getPlayerSelect(sourceId) {
+    return dom.getVisibleElementById(document, sourceId) || dom.getElementsById(document, sourceId)[0] || null;
+  }
+
   function clonePlayerSelect(sourceId) {
-    const source = dom.getVisibleElementById(document, sourceId);
+    const source = getPlayerSelect(sourceId);
     const clone = source.cloneNode(true);
     clone.removeAttribute('id');
     clone.style.margin = '0 6px';
@@ -154,7 +190,7 @@
   }
 
   function playerLabel(value) {
-    const playerOut = dom.getVisibleElementById(document, 'player_out');
+    const playerOut = getPlayerSelect('player_out');
     const option = playerOut?.querySelector(`option[value="${CSS.escape(value)}"]`);
     return option?.textContent?.trim() || value;
   }
@@ -287,11 +323,6 @@
   }
 
   function injectPanel() {
-    if (!isChangeAddView()) {
-      cleanupChangeAddView();
-      return;
-    }
-
     if (dom.getVisibleElementById(document, PANEL_ID)) {
       hideOriginalPlayerBlock();
       hideOriginalSaveButton();
