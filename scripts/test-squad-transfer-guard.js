@@ -5,13 +5,31 @@
 var assert = require('assert');
 var squadEnhancer = require('../vm-squad-view-enhancer.user.js');
 
+function createMockElement(visible) {
+  return {
+    nodeType: 1,
+    style: visible ? {} : { display: 'none' },
+    parentElement: null,
+    getBoundingClientRect: function () {
+      return visible ? { width: 10, height: 10 } : { width: 0, height: 0 };
+    }
+  };
+}
+
 function createMockDocument(options) {
   var ids = options.ids || {};
+  var hiddenIds = options.hiddenIds || {};
   var rows = options.rows || [];
 
   return {
     getElementById: function (id) {
-      return ids[id] ? {} : null;
+      if (hiddenIds[id]) {
+        return createMockElement(false);
+      }
+      if (ids[id]) {
+        return createMockElement(true);
+      }
+      return null;
     },
     querySelectorAll: function (selector) {
       if (selector === 'tr') {
@@ -28,9 +46,10 @@ function createMockDocument(options) {
   };
 }
 
-function createMockRow(cellTexts, html) {
+function createMockRow(cellTexts, html, visible) {
   var rowHtml = html || cellTexts.join(' ');
   var playerOnclick = "callGetViewPanelMenuAndBody('Player&playerId=1949633','Player&playerId=1949633');";
+  var isVisible = visible !== false;
 
   var linkCell = {
     textContent: '',
@@ -46,6 +65,12 @@ function createMockRow(cellTexts, html) {
   };
 
   return {
+    nodeType: 1,
+    style: isVisible ? {} : { display: 'none' },
+    parentElement: null,
+    getBoundingClientRect: function () {
+      return isVisible ? { width: 10, height: 10 } : { width: 0, height: 0 };
+    },
     children: cellTexts.map(function (text, index) {
       return index === 0 ? linkCell : { textContent: text };
     }),
@@ -80,7 +105,16 @@ var squadPlayerRow = createMockRow(
 assert.strictEqual(
   squadEnhancer.isTransferListDocument(transferListDoc),
   true,
-  'search_count should identify transfer list'
+  'visible search_count should identify transfer list'
+);
+
+assert.strictEqual(
+  squadEnhancer.isTransferListDocument(createMockDocument({
+    ids: { search_count: true },
+    hiddenIds: { search_count: true }
+  })),
+  false,
+  'hidden search_count must not block other views'
 );
 assert.strictEqual(
   squadEnhancer.isTransferListDocument(transferHeaderDoc),

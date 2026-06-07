@@ -1,18 +1,28 @@
 // ==UserScript==
 // @name         Volleyball Bulk Change Add
 // @namespace    https://vm-manager.org/
-// @version      0.1.2
+// @version      0.2.0
 // @description  Enhances VM Manager tactic changes view with bulk change add functionality.
 // @match        *://*.vm-manager.org/*
 // @match        *://vm-manager.org/*
 // @grant        none
 // @run-at       document-end
+// @require      https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-dom-utils.js
 // @updateURL    https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-tactic-changes-view-enhancer.user.js
 // @downloadURL  https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-tactic-changes-view-enhancer.user.js
 // ==/UserScript==
 
 (function () {
   'use strict';
+
+  const dom = window.VMDomUtils;
+
+  if (!dom) {
+    throw new Error('Volleyball Bulk Change Add wymaga vm-dom-utils.js (@require).');
+  }
+
+  const HIDDEN_MARKER = 'data-tm-hidden-by-enhancer';
+  const PANEL_ID = 'tm-bulk-change-add';
 
   const SAVE_ACTION_BY_TYPE = {
     League: 'Tactic',
@@ -28,7 +38,7 @@
   }
 
   function getSaveOnclick() {
-    return [...document.querySelectorAll('span.link')]
+    return dom.queryVisibleAll(document, 'span.link')
       .map(getOnClick)
       .find(text => text.includes('PlayersChangeAdd')) || '';
   }
@@ -51,17 +61,17 @@
     const route = getNativeRoute();
 
     return route.changeId === '0' &&
-      document.querySelector('#player_out') &&
-      document.querySelector('#player_in') &&
+      dom.getVisibleElementById(document, 'player_out') &&
+      dom.getVisibleElementById(document, 'player_in') &&
       getSaveOnclick().includes('PlayersChangeAdd');
   }
 
   function val(id, fallback = '0') {
-    return document.getElementById(id)?.value ?? fallback;
+    return dom.getVisibleElementById(document, id)?.value ?? fallback;
   }
 
   function radio(name, fallback = '0') {
-    return document.querySelector(`input[name="${name}"]:checked`)?.value ?? fallback;
+    return dom.queryVisibleFirst(document, `input[name="${name}"]:checked`)?.value ?? fallback;
   }
 
   function readSetPicker(selector) {
@@ -135,7 +145,7 @@
   }
 
   function clonePlayerSelect(sourceId) {
-    const source = document.getElementById(sourceId);
+    const source = dom.getVisibleElementById(document, sourceId);
     const clone = source.cloneNode(true);
     clone.removeAttribute('id');
     clone.style.margin = '0 6px';
@@ -144,7 +154,8 @@
   }
 
   function playerLabel(value) {
-    const option = document.querySelector(`#player_out option[value="${CSS.escape(value)}"]`);
+    const playerOut = dom.getVisibleElementById(document, 'player_out');
+    const option = playerOut?.querySelector(`option[value="${CSS.escape(value)}"]`);
     return option?.textContent?.trim() || value;
   }
 
@@ -169,7 +180,7 @@
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.value = String(i);
-      cb.checked = document.getElementById(`set_${i}`)?.checked ?? true;
+      cb.checked = dom.getVisibleElementById(document, `set_${i}`)?.checked ?? true;
 
       label.append(cb, document.createTextNode(String(i)));
       wrap.append(label);
@@ -233,25 +244,30 @@
   }
 
   function getOriginalPlayerBlock() {
-    const playerOut = document.getElementById('player_out');
+    const playerOut = dom.getVisibleElementById(document, 'player_out');
     return playerOut?.closest('table')?.closest('table')?.closest('td')?.closest('tr')?.closest('table');
   }
 
   function hideOriginalPlayerBlock() {
     const block = getOriginalPlayerBlock();
-    if (block) {
-      block.style.display = 'none';
-    }
+    dom.hideElement(block, HIDDEN_MARKER);
   }
 
   function hideOriginalSaveButton() {
-    const saveButton = [...document.querySelectorAll('span.link')]
+    const saveButton = dom.queryVisibleAll(document, 'span.link')
       .find(el => getOnClick(el).includes('PlayersChangeAdd'));
 
     const table = saveButton?.closest('table');
-    if (table) {
-      table.style.display = 'none';
+    dom.hideElement(table, HIDDEN_MARKER);
+  }
+
+  function cleanupChangeAddView() {
+    const panel = document.getElementById(PANEL_ID);
+    if (panel) {
+      panel.remove();
     }
+
+    dom.restoreHiddenElements(document, HIDDEN_MARKER);
   }
 
   async function savePair(pair) {
@@ -271,18 +287,21 @@
   }
 
   function injectPanel() {
-    if (!isChangeAddView()) return;
+    if (!isChangeAddView()) {
+      cleanupChangeAddView();
+      return;
+    }
 
-    if (document.getElementById('tm-bulk-change-add')) {
+    if (dom.getVisibleElementById(document, PANEL_ID)) {
       hideOriginalPlayerBlock();
       hideOriginalSaveButton();
       return;
     }
 
-    const route = getNativeRoute();
+    dom.removeHiddenById(document, PANEL_ID);
 
     const panel = document.createElement('div');
-    panel.id = 'tm-bulk-change-add';
+    panel.id = PANEL_ID;
     panel.style.cssText = `
       box-sizing: border-box;
       width: 100%;
@@ -414,8 +433,11 @@
     setOwnSetsMode(false);
   }
 
-  const observer = new MutationObserver(() => injectPanel());
-  observer.observe(document.body, { childList: true, subtree: true });
-
-  injectPanel();
+  dom.createViewScheduler({
+    document: document,
+    isActive: isChangeAddView,
+    onEnhance: injectPanel,
+    onDeactivate: cleanupChangeAddView,
+    delayMs: 120
+  }).start();
 })();

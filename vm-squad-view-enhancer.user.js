@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         VM Squad View Enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.1.14
+// @version      0.2.0
 // @description  Enhances VM Manager squad view with training progress and position fit.
 // @match        *://*.vm-manager.org/*
 // @match        *://vm-manager.org/*
 // @grant        none
 // @run-at       document-end
+// @require      https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-dom-utils.js
 // @updateURL    https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-squad-view-enhancer.user.js
 // @downloadURL  https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-squad-view-enhancer.user.js
 // ==/UserScript==
@@ -23,6 +24,18 @@
   }
 }(typeof window !== 'undefined' ? window : null, function (root) {
   'use strict';
+
+  var dom = (root && root.VMDomUtils) || (function () {
+    try {
+      return require('./vm-dom-utils.js');
+    } catch (error) {
+      return null;
+    }
+  })();
+
+  if (!dom) {
+    throw new Error('VM Squad View Enhancer wymaga vm-dom-utils.js (@require).');
+  }
 
   var STYLE_ID = 'vms-style';
   var HEADER_CLASS = 'vms-training-header';
@@ -123,7 +136,6 @@
     }
   };
 
-  var scheduleTimer = null;
   var trainingPromise = null;
   var trainingState = {
     status: 'idle',
@@ -679,7 +691,7 @@
   }
 
   function getActivePositionFilters(documentRef) {
-    var checkboxes = Array.prototype.slice.call(documentRef.querySelectorAll('.' + FILTER_CHECKBOX_CLASS));
+    var checkboxes = dom.queryVisibleAll(documentRef, '.' + FILTER_CHECKBOX_CLASS);
     var active = {};
 
     checkboxes.forEach(function (checkbox) {
@@ -696,12 +708,17 @@
     var i;
     var cellTexts;
 
-    if (documentRef.getElementById('search_count') || documentRef.getElementById('1_search_panel')) {
+    if (dom.getVisibleElementById(documentRef, 'search_count') ||
+      dom.getVisibleElementById(documentRef, '1_search_panel')) {
       return true;
     }
 
     rows = Array.prototype.slice.call(documentRef.querySelectorAll('tr'));
     for (i = 0; i < rows.length; i += 1) {
+      if (!dom.isVisibleElement(rows[i])) {
+        continue;
+      }
+
       cellTexts = Array.prototype.slice.call(rows[i].children).map(function (cell) {
         return normalizeText(cell.textContent);
       });
@@ -780,7 +797,7 @@
     input.checked = true;
     text.textContent = item.label;
     input.addEventListener('change', function () {
-      Array.prototype.slice.call(documentRef.querySelectorAll('.' + FILTER_CHECKBOX_CLASS)).forEach(function (checkbox) {
+      dom.queryVisibleAll(documentRef, '.' + FILTER_CHECKBOX_CLASS).forEach(function (checkbox) {
         if (checkbox.value === input.value) {
           checkbox.checked = input.checked;
         }
@@ -830,7 +847,7 @@
     reset.type = 'button';
     reset.textContent = 'Reset';
     reset.addEventListener('click', function () {
-      Array.prototype.slice.call(documentRef.querySelectorAll('.' + FILTER_CHECKBOX_CLASS)).forEach(function (checkbox) {
+      dom.queryVisibleAll(documentRef, '.' + FILTER_CHECKBOX_CLASS).forEach(function (checkbox) {
         checkbox.checked = true;
       });
       applyPositionFilter(documentRef);
@@ -1017,7 +1034,13 @@
     var rows = Array.prototype.slice.call(documentRef.querySelectorAll('tr'));
 
     return rows.filter(function (row) {
-      var cellTexts = Array.prototype.slice.call(row.children).map(function (cell) {
+      var cellTexts;
+
+      if (!dom.isVisibleElement(row)) {
+        return false;
+      }
+
+      cellTexts = Array.prototype.slice.call(row.children).map(function (cell) {
         return normalizeText(cell.textContent);
       });
 
@@ -1261,6 +1284,12 @@
     }).join('|');
   }
 
+  function squadRowsFullyEnhanced(playerRows) {
+    return playerRows.every(function (row) {
+      return row.querySelector('.' + CELL_CLASS) && row.querySelector('.' + FIT_CELL_CLASS);
+    });
+  }
+
   function readTrainingCache(storage) {
     var raw;
     var parsed;
@@ -1349,8 +1378,8 @@
   }
 
   function applyTrainingValues(values) {
-    var trainingCells = Array.prototype.slice.call(root.document.querySelectorAll('.' + CELL_CLASS));
-    var fitCells = Array.prototype.slice.call(root.document.querySelectorAll('.' + FIT_CELL_CLASS));
+    var trainingCells = dom.queryVisibleAll(root.document, '.' + CELL_CLASS);
+    var fitCells = dom.queryVisibleAll(root.document, '.' + FIT_CELL_CLASS);
 
     trainingCells.forEach(function (cell) {
       var playerId = cell.getAttribute('data-vms-player-id');
@@ -1367,8 +1396,8 @@
   }
 
   function applyTrainingError() {
-    var trainingCells = Array.prototype.slice.call(root.document.querySelectorAll('.' + CELL_CLASS));
-    var fitCells = Array.prototype.slice.call(root.document.querySelectorAll('.' + FIT_CELL_CLASS));
+    var trainingCells = dom.queryVisibleAll(root.document, '.' + CELL_CLASS);
+    var fitCells = dom.queryVisibleAll(root.document, '.' + FIT_CELL_CLASS);
 
     trainingCells.forEach(function (cell) {
       setTrainingCell(cell, null);
@@ -1379,24 +1408,22 @@
     });
   }
 
+  function isSquadView(documentRef) {
+    return !isTransferListDocument(documentRef) &&
+      findHeaderRows(documentRef).length > 0 &&
+      findSquadPlayerRows(documentRef).length > 0;
+  }
+
   function enhanceSquad() {
     var documentRef = root.document;
     var headerRows;
     var playerRows;
     var signature;
 
-    if (isTransferListDocument(documentRef)) {
-      cleanupSquadEnhancements(documentRef);
-      return;
-    }
-
     headerRows = findHeaderRows(documentRef);
     playerRows = findSquadPlayerRows(documentRef);
 
     if (!headerRows.length || !playerRows.length) {
-      if (!headerRows.length) {
-        cleanupSquadEnhancements(documentRef);
-      }
       return;
     }
 
@@ -1404,8 +1431,7 @@
     signature = createSquadSignature(playerRows);
 
     if (documentRef.body.getAttribute(SQUAD_SIGNATURE_ATTR) === signature &&
-      Array.prototype.slice.call(documentRef.querySelectorAll('.' + CELL_CLASS)).length >= playerRows.length &&
-      Array.prototype.slice.call(documentRef.querySelectorAll('.' + FIT_CELL_CLASS)).length >= playerRows.length) {
+      squadRowsFullyEnhanced(playerRows)) {
       if (trainingState.status === 'loaded') {
         applyTrainingValues(trainingState.values);
       }
@@ -1422,28 +1448,18 @@
     fetchTrainingValues().then(applyTrainingValues).catch(applyTrainingError);
   }
 
-  function scheduleEnhancement() {
-    if (scheduleTimer) {
-      root.clearTimeout(scheduleTimer);
-    }
-
-    scheduleTimer = root.setTimeout(function () {
-      scheduleTimer = null;
-      enhanceSquad();
-    }, 120);
-  }
-
   function start() {
     if (!root || !root.document || !root.fetch) {
       return;
     }
 
-    enhanceSquad();
-
-    new root.MutationObserver(scheduleEnhancement).observe(root.document.body, {
-      childList: true,
-      subtree: true
-    });
+    dom.createViewScheduler({
+      document: root.document,
+      isActive: isSquadView,
+      onEnhance: enhanceSquad,
+      onDeactivate: cleanupSquadEnhancements,
+      delayMs: 120
+    }).start();
   }
 
   return {

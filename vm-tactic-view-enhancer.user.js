@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         VM Tactic View Enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.1.7
+// @version      0.2.0
 // @description  Enhances VM Manager tactic view with match-day training progress warnings.
 // @match        *://*.vm-manager.org/*
 // @match        *://vm-manager.org/*
 // @grant        none
 // @run-at       document-end
+// @require      https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-dom-utils.js
 // @updateURL    https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-tactic-view-enhancer.user.js
 // @downloadURL  https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-tactic-view-enhancer.user.js
 // ==/UserScript==
@@ -23,6 +24,18 @@
   }
 }(typeof window !== 'undefined' ? window : null, function (root) {
   'use strict';
+
+  var dom = (root && root.VMDomUtils) || (function () {
+    try {
+      return require('./vm-dom-utils.js');
+    } catch (error) {
+      return null;
+    }
+  })();
+
+  if (!dom) {
+    throw new Error('VM Tactic View Enhancer wymaga vm-dom-utils.js (@require).');
+  }
 
   var STYLE_ID = 'vmt-style';
   var BADGE_CLASS = 'vmt-training-badge';
@@ -45,7 +58,6 @@
     7: 'Libero'
   };
 
-  var scheduleTimer = null;
   var trainingPromise = null;
   var trainingState = {
     status: 'idle',
@@ -378,7 +390,7 @@
   }
 
   function getTacticPlayers(documentRef) {
-    var selects = Array.prototype.slice.call(documentRef.querySelectorAll('select[id]'));
+    var selects = dom.queryVisibleAll(documentRef, 'select[id]');
     var players = [];
     var seen = {};
 
@@ -399,7 +411,38 @@
   }
 
   function isTacticPage(documentRef) {
-    return Boolean(documentRef.querySelector('.set_tactic') && getTacticPlayers(documentRef).length > 0);
+    var tacticRoot = dom.queryVisibleFirst(documentRef, '.set_tactic');
+
+    return Boolean(tacticRoot && getTacticPlayers(documentRef).length > 0);
+  }
+
+  function cleanupTacticEnhancements(documentRef) {
+    documentRef.body.removeAttribute(SIGNATURE_ATTR);
+    documentRef.body.removeAttribute(ENHANCED_ATTR);
+  }
+
+  function tacticPlayersFullyEnhanced(documentRef, players) {
+    return players.every(function (player) {
+      var select = findSelectBySlot(documentRef, player.slot);
+      var frame;
+      var parent;
+
+      if (!select || !dom.isVisibleElement(select)) {
+        return false;
+      }
+
+      if (player.slot <= STARTING_SLOTS) {
+        return Boolean(findExistingFieldPositionCell(documentRef, player.slot));
+      }
+
+      frame = findSelectFrame(select);
+      parent = frame && frame.parentNode ? frame.parentNode : select.parentNode;
+      return Boolean(parent && parent.querySelector('.vmt-training-wrap'));
+    });
+  }
+
+  function findVisibleSummaryPanel(documentRef) {
+    return dom.queryVisibleFirst(documentRef, '.' + SUMMARY_PANEL_CLASS);
   }
 
   function createBadge(documentRef, percent) {
@@ -440,7 +483,8 @@
   }
 
   function findExistingFieldPositionCell(documentRef, slot) {
-    var line = documentRef.querySelector('.vmt-position-line[data-vmt-slot="' + slot + '"]');
+    var lines = Array.prototype.slice.call(documentRef.querySelectorAll('.vmt-position-line[data-vmt-slot="' + slot + '"]'));
+    var line = lines.find(dom.isVisibleElement);
 
     return line ? line.parentNode : null;
   }
@@ -459,7 +503,7 @@
       return null;
     }
 
-    cells = Array.prototype.slice.call(documentRef.querySelectorAll('.set_tactic td'));
+    cells = dom.queryVisibleAll(documentRef, '.set_tactic td');
     matches = cells.filter(function (cell) {
       return !cell.querySelector('select') && normalizeText(cell.textContent) === label;
     });
@@ -541,7 +585,7 @@
   }
 
   function findSelectBySlot(documentRef, slot) {
-    var players = Array.prototype.slice.call(documentRef.querySelectorAll('select[id]'));
+    var players = dom.queryVisibleAll(documentRef, 'select[id]');
     var i;
 
     for (i = 0; i < players.length; i += 1) {
@@ -564,8 +608,15 @@
     var i;
 
     for (i = 0; i < rows.length; i += 1) {
-      var cells = Array.prototype.slice.call(rows[i].children);
-      var blockCell = cells.find(function (cell) {
+      var cells;
+      var blockCell;
+
+      if (!dom.isVisibleElement(rows[i])) {
+        continue;
+      }
+
+      cells = Array.prototype.slice.call(rows[i].children);
+      blockCell = cells.find(function (cell) {
         var text = normalizeText(cell.textContent);
         return text.indexOf('Taktyka bloku:') !== -1 && text.indexOf('Rezerwowi:') === -1;
       });
@@ -787,18 +838,14 @@
     var players;
     var signature;
 
-    if (!isTacticPage(documentRef)) {
-      return;
-    }
-
     injectStyles(documentRef);
     players = getTacticPlayers(documentRef);
     signature = createSignature(players);
 
     if (documentRef.body.getAttribute(SIGNATURE_ATTR) === signature &&
       documentRef.body.getAttribute(ENHANCED_ATTR) === '1' &&
-      documentRef.querySelectorAll('.vmt-training-wrap').length >= players.length &&
-      documentRef.querySelector('.' + SUMMARY_PANEL_CLASS)) {
+      tacticPlayersFullyEnhanced(documentRef, players) &&
+      findVisibleSummaryPanel(documentRef)) {
       return;
     }
 
@@ -808,28 +855,18 @@
     fetchTrainingValues().then(renderTrainingValues).catch(renderTrainingError);
   }
 
-  function scheduleEnhancement() {
-    if (scheduleTimer) {
-      root.clearTimeout(scheduleTimer);
-    }
-
-    scheduleTimer = root.setTimeout(function () {
-      scheduleTimer = null;
-      enhanceTactic();
-    }, 120);
-  }
-
   function start() {
     if (!root || !root.document || !root.fetch) {
       return;
     }
 
-    enhanceTactic();
-
-    new root.MutationObserver(scheduleEnhancement).observe(root.document.body, {
-      childList: true,
-      subtree: true
-    });
+    dom.createViewScheduler({
+      document: root.document,
+      isActive: isTacticPage,
+      onEnhance: enhanceTactic,
+      onDeactivate: cleanupTacticEnhancements,
+      delayMs: 120
+    }).start();
   }
 
   return {

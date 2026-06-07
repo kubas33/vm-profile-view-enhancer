@@ -1,18 +1,25 @@
 // ==UserScript==
 // @name         VM Profile View Enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.1.5
+// @version      0.2.0
 // @description  Enhances VM Manager player profile attributes with position-aware markers and summary.
 // @match        *://*.vm-manager.org/*
 // @match        *://vm-manager.org/*
 // @grant        none
 // @run-at       document-end
+// @require      https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-dom-utils.js
 // @updateURL    https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-profile-view-enhancer.user.js
 // @downloadURL  https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-profile-view-enhancer.user.js
 // ==/UserScript==
 
 (function () {
   'use strict';
+
+  var dom = window.VMDomUtils;
+
+  if (!dom) {
+    throw new Error('VM Profile View Enhancer wymaga vm-dom-utils.js (@require).');
+  }
 
   var MAX_ATTRIBUTE = 50.5;
   var STYLE_ID = 'vmp-style';
@@ -68,8 +75,6 @@
   };
 
   var ATTRIBUTE_SET = makeSet(ATTRIBUTE_NAMES);
-  var scheduleTimer = null;
-
   function makeSet(items) {
     return items.reduce(function (result, item) {
       result[item] = true;
@@ -281,7 +286,7 @@
   }
 
   function findProfileContainers() {
-    var candidates = Array.prototype.slice.call(document.querySelectorAll('td.second[width="684"], td.second'));
+    var candidates = dom.queryVisibleAll(document, 'td.second[width="684"], td.second');
 
     return candidates.filter(function (candidate) {
       var position = findPosition(candidate);
@@ -289,6 +294,10 @@
 
       return Boolean(position && attributes.length >= 8);
     });
+  }
+
+  function isProfileView() {
+    return findProfileContainers().length > 0;
   }
 
   function getImportance(position, name) {
@@ -548,24 +557,13 @@
     findProfileContainers().forEach(enhanceProfile);
   }
 
-  function scheduleEnhancement() {
-    if (scheduleTimer) {
-      window.clearTimeout(scheduleTimer);
-    }
-
-    scheduleTimer = window.setTimeout(function () {
-      scheduleTimer = null;
-      enhanceProfiles();
-    }, 120);
-  }
-
   function start() {
-    enhanceProfiles();
-
-    new MutationObserver(scheduleEnhancement).observe(document.body, {
-      childList: true,
-      subtree: true
-    });
+    dom.createViewScheduler({
+      document: document,
+      isActive: isProfileView,
+      onEnhance: enhanceProfiles,
+      delayMs: 120
+    }).start();
   }
 
   if (document.body) {

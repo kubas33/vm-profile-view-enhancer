@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Volleyball training view enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.2.1
+// @version      0.3.0
 // @description  Highlights risky and wasteful training choices in senior and junior training views.
 // @match        *://*.vm-manager.org/*
 // @match        *://vm-manager.org/*
@@ -9,10 +9,17 @@
 // @downloadURL  https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-training-view-engancer.user.js
 // @run-at       document-end
 // @grant        none
+// @require      https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-dom-utils.js
 // ==/UserScript==
 
 (function () {
   'use strict';
+
+  const dom = window.VMDomUtils;
+
+  if (!dom) {
+    throw new Error('Volleyball Training View Enhancer wymaga vm-dom-utils.js (@require).');
+  }
 
   const CONFIG = {
     maxAttributeEpsilon: 0.05,
@@ -196,7 +203,7 @@
   }
 
   function getSelectedSkill(view) {
-    const select = document.getElementById(view.selectId);
+    const select = dom.getVisibleElementById(document, view.selectId);
     return select ? select.value : null;
   }
 
@@ -214,16 +221,24 @@
   }
 
   function getTrainingRoot(view) {
-    const form = document.getElementById(view.formId);
+    const form = dom.getVisibleElementById(document, view.formId);
     if (form) return form;
 
-    const select = document.getElementById(view.selectId);
-    if (select) return document.body;
+    const select = dom.getVisibleElementById(document, view.selectId);
+    if (select) {
+      return select.closest('form') || select.closest('table')?.closest('form') || null;
+    }
 
-    const trainingInput = document.querySelector(`input[type="radio"][name^="${view.inputPrefix}"]`);
-    if (trainingInput) return document.body;
+    const trainingInput = dom.queryVisibleFirst(document, `input[type="radio"][name^="${view.inputPrefix}"]`);
+    if (trainingInput) {
+      return trainingInput.closest('form') || null;
+    }
 
     return null;
+  }
+
+  function isTrainingView(view) {
+    return Boolean(getTrainingRoot(view));
   }
 
   function colorAttributeValues(form, view) {
@@ -349,8 +364,10 @@
   }
 
   function ensurePanel(form, view) {
-    let panel = document.getElementById(view.panelId);
+    let panel = dom.getVisibleElementById(document, view.panelId);
     if (panel) return panel;
+
+    dom.removeHiddenById(document, view.panelId);
 
     panel = document.createElement('div');
     panel.id = view.panelId;
@@ -433,7 +450,11 @@
 
   function scheduleEnhance() {
     window.clearTimeout(renderTimer);
-    renderTimer = window.setTimeout(enhanceTrainingViews, CONFIG.rerenderDelayMs);
+    renderTimer = window.setTimeout(() => {
+      if (VIEW_CONFIGS.some(isTrainingView)) {
+        enhanceTrainingViews();
+      }
+    }, CONFIG.rerenderDelayMs);
   }
 
   document.addEventListener('change', (event) => {
