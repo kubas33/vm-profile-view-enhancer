@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VM Changes List Enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.1.4
+// @version      0.1.5
 // @description  Sorting and filtering for VM Manager tactic changes list view.
 // @match        *://*.vm-manager.org/*
 // @match        *://vm-manager.org/*
@@ -70,6 +70,71 @@
     root.console.log.apply(root.console, ['[vtcl]'].concat(Array.prototype.slice.call(arguments)));
   }
 
+  function infoLog() {
+    if (!root || !root.console) {
+      return;
+    }
+
+    root.console.info.apply(root.console, ['[vtcl]'].concat(Array.prototype.slice.call(arguments)));
+  }
+
+  function isInvalidScopeNode(node) {
+    if (!node || !node.tagName) {
+      return true;
+    }
+
+    var tag = node.tagName.toLowerCase();
+    return tag === 'body' || tag === 'html' || tag === 'head';
+  }
+
+  function findVmContentPanel(documentRef, visibleEdit) {
+    var node = visibleEdit;
+
+    while (node && node.parentNode) {
+      if (node.id && node.id.indexOf('view_panel_body') === 0) {
+        return node;
+      }
+      node = node.parentNode;
+    }
+
+    return dom.queryVisibleFirst(documentRef, '[id^="view_panel_body"]');
+  }
+
+  function getViewScope(documentRef) {
+    var visibleEdit = dom.queryVisibleAll(documentRef, 'span.small_link').find(function (el) {
+      return getOnClick(el).indexOf('ChangeEdit&changeId=') !== -1;
+    });
+    var vmPanel;
+    var node;
+
+    if (!visibleEdit) {
+      return null;
+    }
+
+    vmPanel = findVmContentPanel(documentRef, visibleEdit);
+    node = visibleEdit;
+
+    while (node && node.nodeType === 1) {
+      if (isInvalidScopeNode(node)) {
+        break;
+      }
+
+      if (vmPanel && node !== vmPanel && !vmPanel.contains(node)) {
+        node = node.parentNode;
+        continue;
+      }
+
+      if (findChangeDataRowsInScope(node).length &&
+        findChangesHeaderRow(documentRef, node, false)) {
+        return node;
+      }
+
+      node = node.parentNode;
+    }
+
+    return vmPanel;
+  }
+
   function describeNode(node) {
     if (!node || !node.tagName) {
       return String(node);
@@ -78,29 +143,6 @@
     return node.tagName.toLowerCase() +
       (node.id ? '#' + node.id : '') +
       (node.className ? '.' + String(node.className).trim().replace(/\s+/g, '.') : '');
-  }
-
-  function getViewScope(documentRef) {
-    var visibleEdit = dom.queryVisibleAll(documentRef, 'span.small_link').find(function (el) {
-      return getOnClick(el).indexOf('ChangeEdit&changeId=') !== -1;
-    });
-    var node;
-    var best = null;
-
-    if (!visibleEdit) {
-      return null;
-    }
-
-    node = visibleEdit;
-    while (node && node !== documentRef && node.nodeType === 1) {
-      if (findChangeDataRowsInScope(node).length &&
-        findChangesHeaderRow(documentRef, node, false)) {
-        best = node;
-      }
-      node = node.parentNode;
-    }
-
-    return best;
   }
 
   function normalizeText(value) {
@@ -485,7 +527,12 @@
     }
 
     listTable = findListContainer(headerBlockRow, headerRow) || getTableParent(headerBlockRow) || scope;
-    mountTarget = getMountTarget(headerRow, headerBlockRow);
+    mountTarget = getMountTarget(headerRow, headerBlockRow, scope);
+
+    if (!mountTarget) {
+      debugLog('findChangesListRoot: brak mountTarget', describeNode(scope));
+      return null;
+    }
 
     return {
       headerRow: headerRow,
@@ -497,31 +544,54 @@
     };
   }
 
-  function getMountTarget(headerRow, headerBlockRow) {
+  function getMountTarget(headerRow, headerBlockRow, scope) {
     var headerTable = headerRow.closest('table');
     var parent = headerTable ? headerTable.parentNode : null;
+    var node;
 
-    if (parent && parent.nodeType === 1) {
+    if (parent && scope && scope.contains(parent)) {
       return {
         parent: parent,
         before: headerTable
       };
     }
 
-    return {
-      parent: headerBlockRow.parentNode,
-      before: headerBlockRow
-    };
+    if (headerBlockRow.parentNode && scope && scope.contains(headerBlockRow)) {
+      return {
+        parent: headerBlockRow.parentNode,
+        before: headerBlockRow
+      };
+    }
+
+    node = headerBlockRow;
+    while (node && node !== scope) {
+      if (node.parentNode && scope.contains(node.parentNode)) {
+        return {
+          parent: node.parentNode,
+          before: node
+        };
+      }
+      node = node.parentNode;
+    }
+
+    if (scope) {
+      return {
+        parent: scope,
+        before: scope.firstElementChild
+      };
+    }
+
+    return null;
   }
 
   function isPanelMounted(documentRef, listRoot) {
     var panel = documentRef.getElementById(PANEL_ID);
 
-    if (!panel || !panel.isConnected || !listRoot || !listRoot.mountTarget) {
+    if (!panel || !panel.isConnected || !listRoot || !listRoot.scope) {
       return false;
     }
 
-    return listRoot.mountTarget.parent.contains(panel);
+    return listRoot.scope.contains(panel);
   }
 
   function getFilterPanel(documentRef) {
@@ -1083,7 +1153,7 @@
     }
 
     mountTarget.parent.insertBefore(panel, mountTarget.before);
-    debugLog('mountFilterPanel: div', describeNode(mountTarget.parent));
+    debugLog('mountFilterPanel', describeNode(mountTarget.parent), 'before', describeNode(mountTarget.before));
     return documentRef.getElementById(PANEL_ID) === panel && panel.isConnected;
   }
 
@@ -1166,6 +1236,7 @@
 
       mounted = mountFilterPanel(documentRef, listRoot, panel);
       if (!mounted) {
+        infoLog('nie udało się zamontować panelu — włącz debug: localStorage.setItem("vtcl.debug","1")');
         debugLog('enhanceChangesList: mount failed', collectDebugStatus(documentRef));
         return;
       }
@@ -1173,11 +1244,8 @@
       documentRef.body.setAttribute(SIGNATURE_ATTR, signature);
       lastEnhanceKey = enhanceKey;
       applyFilters(documentRef, listRoot);
-      debugLog('enhanceChangesList: ok', {
-        rows: parsedRows.length,
-        scope: describeNode(listRoot.scope),
-        mounted: isPanelMounted(documentRef, listRoot)
-      });
+      infoLog('panel filtrów aktywny', describeNode(listRoot.scope));
+      debugLog('enhanceChangesList: ok', collectDebugStatus(documentRef));
     } finally {
       enhancing = false;
     }
@@ -1197,7 +1265,8 @@
       return;
     }
 
-    debugLog('start: VM Changes List Enhancer v0.1.4');
+    infoLog('VM Changes List Enhancer v0.1.5 — debug: localStorage.setItem("vtcl.debug","1")');
+    debugLog('start');
 
     if (root) {
       root.VMChangesListEnhancer = api;
