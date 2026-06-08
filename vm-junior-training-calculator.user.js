@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Volleyball junior training calculator
 // @namespace    https://vm-manager.org/
-// @version      0.3.0
+// @version      0.3.1
 // @description  Projects junior academy skill growth with comparable allocation strategies.
 // @match        *://*.vm-manager.org/*
 // @match        *://vm-manager.org/*
@@ -499,8 +499,8 @@
       var cells = result.skills.map(function (skill) {
         var className = skill.reachedTarget ? 'vjtc-ok' : 'vjtc-miss';
         var suffix = skill.reachedTarget
-          ? ''
-          : ' (-' + skill.remainingTrainingsToTarget + ')';
+          ? ' (' + skill.trainingsUsed + ' tr.)'
+          : ' (-' + skill.remainingTrainingsToTarget + ' tr.)';
         return ''
           + '<td class="' + className + '">'
           + escapeHtml(formatLevel(skill.level))

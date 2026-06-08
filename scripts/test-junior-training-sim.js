@@ -19,6 +19,8 @@ var soloResult = sim.simulate({
 
 assert.strictEqual(soloResult.totalLevelUps, 24, '7->30.5 should produce 24 attribute level-ups');
 assert.strictEqual(soloResult.skills[0].levelUps, 24, 'single skill should track its own level-ups');
+assert.strictEqual(soloResult.skills[0].trainingsUsed, 142, '7->30.5 should use 142 trainings on that skill');
+assert.strictEqual(soloResult.skills[0].reachedTarget, true);
 assert.strictEqual(sim.sessionsToLevelUp(30, 16), 7, '30->30.5 should use 25+ tier at age 16');
 assert.strictEqual(sim.sessionsToLevelUp(14, 16), 5, '14->15 should still use tier below 15');
 assert.strictEqual(sim.sessionsToLevelUp(15, 16), 6, '15->16 should use tier below 25');

@@ -157,6 +157,7 @@
         level: Number(skill.level),
         progress: 0,
         levelUps: 0,
+        trainingsUsed: 0,
         targetLevel: normalizeTargetLevel(skill.targetLevel != null ? skill.targetLevel : defaultTargetLevel),
       };
     });
@@ -326,6 +327,8 @@
             break;
           }
 
+          skills[skillIndex].trainingsUsed += 1;
+
           if (applyTraining(skills[skillIndex], season.age)) {
             totalLevelUps += 1;
           }
@@ -361,6 +364,7 @@
           targetLevel: skill.targetLevel,
           reachedTarget: !isBelowTarget(skill.level, skill.targetLevel),
           remainingTrainingsToTarget: remaining,
+          trainingsUsed: skill.trainingsUsed,
           levelUps: skill.levelUps,
         };
       }),
