@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Volleyball junior training calculator
 // @namespace    https://vm-manager.org/
-// @version      0.3.2
+// @version      0.3.3
 // @description  Projects junior academy skill growth with comparable allocation strategies.
 // @match        *://*.vm-manager.org/*
 // @match        *://vm-manager.org/*
@@ -69,13 +69,15 @@
       + '.vjtc-panel{margin:8px 0;padding:10px 12px;border:1px solid rgba(93,176,225,.35);'
       + 'background:rgba(5,23,35,.78);color:#dceefa;font-size:11px;line-height:1.4;border-radius:4px;}'
       + '.vjtc-title{margin:0 0 8px;font-size:12px;color:#fff;}'
-      + '.vjtc-player-row{display:grid;grid-template-columns:1.6fr auto;gap:8px;margin-bottom:8px;align-items:end;}'
+      + '.vjtc-player-row{display:grid;grid-template-columns:1fr auto;gap:8px;margin-bottom:8px;align-items:end;}'
+      + '.vjtc-player-actions{display:flex;gap:6px;flex-wrap:wrap;}'
+      + '.vjtc-btn:disabled{opacity:.5;cursor:not-allowed;}'
       + '.vjtc-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:8px;}'
       + '.vjtc-hint{margin:0 0 8px;color:#9ec7de;font-size:10px;}'
       + '.vjtc-grid label{display:flex;flex-direction:column;gap:3px;}'
       + '.vjtc-grid input,.vjtc-grid select{width:100%;box-sizing:border-box;}'
       + '.vjtc-skills{margin:8px 0;}'
-      + '.vjtc-skill-row{display:grid;grid-template-columns:auto 1.3fr .65fr .65fr auto;gap:6px;margin-bottom:6px;align-items:center;}'
+      + '.vjtc-skill-row{display:grid;grid-template-columns:auto 1.3fr .65fr .65fr auto auto;gap:6px;margin-bottom:6px;align-items:center;}'
       + '.vjtc-skill-order{display:flex;flex-direction:column;gap:2px;}'
       + '.vjtc-skill-order .vjtc-btn{padding:1px 5px;line-height:1;}'
       + '.vjtc-field-hint{margin-top:2px;color:#8eb6ca;font-size:10px;min-height:12px;}'
@@ -148,7 +150,7 @@
     }).join('');
   }
 
-  function createSkillRow(code, level, targetLevel) {
+  function createSkillRow(code, level, targetLevel, refreshDisabled) {
     var row = document.createElement('div');
     row.className = 'vjtc-skill-row';
     row.innerHTML = ''
@@ -159,8 +161,137 @@
       + '<select class="vjtc-skill-code">' + buildSkillOptions(code || 'UM_PRZYJECIE') + '</select>'
       + '<input class="vjtc-skill-level" type="number" min="0" max="30.5" step="0.5" value="' + escapeHtml(level == null ? 10 : level) + '">'
       + '<input class="vjtc-skill-target" type="number" min="0" max="30.5" step="0.5" value="' + escapeHtml(targetLevel == null ? sim.CONFIG.maxLevel : targetLevel) + '" title="Cel">'
+      + '<button type="button" class="vjtc-btn vjtc-refresh-skill" title="Odswiez poziom z profilu"' + (refreshDisabled ? ' disabled' : '') + '>↻</button>'
       + '<button type="button" class="vjtc-btn vjtc-remove-skill">Usun</button>';
     return row;
+  }
+
+  function getActivePlayer(panel, form) {
+    var select = panel.querySelector('#vjtc-player');
+    if (!select || !select.value) {
+      return null;
+    }
+    return getSelectedPlayer(parser.parseJuniorPlayersFromForm(form), select.value);
+  }
+
+  function getPlayerSkillLevel(player, code) {
+    if (!player || !player.attributes) {
+      return null;
+    }
+    var level = player.attributes[code];
+    return level == null || Number.isNaN(Number(level)) ? null : Number(level);
+  }
+
+  function setRowLevelFromPlayer(row, player) {
+    if (!row || !player) {
+      return false;
+    }
+    var code = row.querySelector('.vjtc-skill-code').value;
+    var level = getPlayerSkillLevel(player, code);
+    if (level === null) {
+      return false;
+    }
+    row.querySelector('.vjtc-skill-level').value = String(level);
+    return true;
+  }
+
+  function refreshSkillLevels(panel, form, singleRow) {
+    var player = getActivePlayer(panel, form);
+    if (!player) {
+      return;
+    }
+    var rows = singleRow
+      ? [singleRow]
+      : panel.querySelectorAll('.vjtc-skill-row');
+    Array.prototype.forEach.call(rows, function (row) {
+      setRowLevelFromPlayer(row, player);
+    });
+  }
+
+  function updatePlayerActionButtonsState(panel, form) {
+    var hasPlayer = Boolean(getActivePlayer(panel, form));
+    var refreshAll = panel.querySelector('#vjtc-refresh-levels');
+    if (refreshAll) {
+      refreshAll.disabled = !hasPlayer;
+    }
+    panel.querySelectorAll('.vjtc-refresh-skill').forEach(function (button) {
+      button.disabled = !hasPlayer;
+    });
+  }
+
+  function getDefaultSkillLevel(panel, form, code) {
+    var player = getActivePlayer(panel, form);
+    var level = player ? getPlayerSkillLevel(player, code) : null;
+    return level == null ? 10 : level;
+  }
+
+  function upgradeSkillRow(row, refreshDisabled) {
+    if (row.querySelector('.vjtc-refresh-skill')) {
+      return;
+    }
+    var refreshButton = document.createElement('button');
+    refreshButton.type = 'button';
+    refreshButton.className = 'vjtc-btn vjtc-refresh-skill';
+    refreshButton.title = 'Odswiez poziom z profilu';
+    refreshButton.textContent = '↻';
+    refreshButton.disabled = Boolean(refreshDisabled);
+    row.insertBefore(refreshButton, row.querySelector('.vjtc-remove-skill'));
+  }
+
+  function ensurePanelControls(panel, form) {
+    var playerRow = panel.querySelector('.vjtc-player-row');
+    var loadButton = panel.querySelector('#vjtc-load-player');
+    var refreshAllButton = panel.querySelector('#vjtc-refresh-levels');
+
+    if (playerRow && loadButton && !refreshAllButton) {
+      var actions = document.createElement('div');
+      actions.className = 'vjtc-player-actions';
+      loadButton.parentNode.insertBefore(actions, loadButton);
+      actions.appendChild(loadButton);
+      refreshAllButton = document.createElement('button');
+      refreshAllButton.type = 'button';
+      refreshAllButton.className = 'vjtc-btn';
+      refreshAllButton.id = 'vjtc-refresh-levels';
+      refreshAllButton.textContent = 'Odswiez poziomy';
+      refreshAllButton.disabled = true;
+      actions.appendChild(refreshAllButton);
+    }
+
+    panel.querySelectorAll('.vjtc-skill-row').forEach(function (row) {
+      upgradeSkillRow(row, true);
+    });
+
+    if (panel.dataset.vjtcControlsBound === '1') {
+      updatePlayerActionButtonsState(panel, form);
+      return;
+    }
+    panel.dataset.vjtcControlsBound = '1';
+
+    panel.addEventListener('change', function (event) {
+      if (!event.target.classList.contains('vjtc-skill-code')) {
+        return;
+      }
+      var row = event.target.closest('.vjtc-skill-row');
+      var player = getActivePlayer(panel, form);
+      if (row && player) {
+        setRowLevelFromPlayer(row, player);
+      }
+    });
+
+    panel.addEventListener('click', function (event) {
+      if (event.target.id === 'vjtc-refresh-levels') {
+        refreshSkillLevels(panel, form);
+        return;
+      }
+      if (event.target.classList.contains('vjtc-refresh-skill')) {
+        var skillRow = event.target.closest('.vjtc-skill-row');
+        if (skillRow) {
+          refreshSkillLevels(panel, form, skillRow);
+        }
+      }
+    });
+
+    updatePlayerActionButtonsState(panel, form);
   }
 
   function moveSkillRow(row, direction) {
@@ -283,12 +414,13 @@
     return skillsRoot;
   }
 
-  function setSkillRows(panel, skills) {
+  function setSkillRows(panel, skills, form) {
     var skillsRoot = clearSkillRows(panel);
     var items = skills && skills.length ? skills : [{ code: 'UM_PRZYJECIE', level: 10, targetLevel: sim.CONFIG.maxLevel }];
+    var refreshDisabled = form ? !getActivePlayer(panel, form) : true;
 
     items.forEach(function (skill) {
-      skillsRoot.appendChild(createSkillRow(skill.code, skill.level, skill.targetLevel));
+      skillsRoot.appendChild(createSkillRow(skill.code, skill.level, skill.targetLevel, refreshDisabled));
     });
   }
 
@@ -311,7 +443,7 @@
     }) || null;
   }
 
-  function loadPlayerIntoPanel(panel, player, loadAllSkills) {
+  function loadPlayerIntoPanel(panel, player, loadAllSkills, form) {
     var ageInput = panel.querySelector('#vjtc-age');
 
     if (player && player.age != null && ageInput) {
@@ -323,7 +455,7 @@
       return;
     }
 
-    setSkillRows(panel, parser.getTrainableSkills(player.attributes));
+    setSkillRows(panel, parser.getTrainableSkills(player.attributes), form);
     panel.dataset.selectedPlayerId = player.playerId;
   }
 
@@ -341,11 +473,12 @@
     if (previousId) {
       var player = getSelectedPlayer(players, previousId);
       if (player) {
-        loadPlayerIntoPanel(panel, player, false);
+        loadPlayerIntoPanel(panel, player, false, form);
       }
     }
 
     panel.dataset.playerCount = String(players.length);
+    updatePlayerActionButtonsState(panel, form);
     return players;
   }
 
@@ -371,7 +504,10 @@
       + '<p class="vjtc-hint">Umiejetnosci wczytuj z tabeli treningu juniorow (ukryte wartosci w HTML wiersza).</p>'
       + '<div class="vjtc-player-row">'
       + '<label>Zawodnik<select id="vjtc-player">' + buildPlayerOptions(players, '') + '</select></label>'
+      + '<div class="vjtc-player-actions">'
       + '<button type="button" class="vjtc-btn" id="vjtc-load-player">Wczytaj umiejetnosci</button>'
+      + '<button type="button" class="vjtc-btn" id="vjtc-refresh-levels" disabled>Odswiez poziomy</button>'
+      + '</div>'
       + '</div>'
       + '<div class="vjtc-grid">'
       + '<label>Wiek<input id="vjtc-age" type="number" min="14" max="18" step="1" value="16"></label>'
@@ -400,12 +536,13 @@
     setSkillRows(panel, [
       { code: 'UM_PRZYJECIE', level: 10, targetLevel: sim.CONFIG.maxLevel },
       { code: 'UM_OBRONA', level: 10, targetLevel: sim.CONFIG.maxLevel },
-    ]);
+    ], form);
 
     panel.querySelector('#vjtc-player').addEventListener('change', function () {
       var currentPlayers = parser.parseJuniorPlayersFromForm(form);
       var player = getSelectedPlayer(currentPlayers, panel.querySelector('#vjtc-player').value);
-      loadPlayerIntoPanel(panel, player, false);
+      loadPlayerIntoPanel(panel, player, false, form);
+      updatePlayerActionButtonsState(panel, form);
     });
 
     panel.querySelector('#vjtc-load-player').addEventListener('click', function () {
@@ -417,13 +554,21 @@
         return;
       }
 
-      loadPlayerIntoPanel(panel, player, true);
+      loadPlayerIntoPanel(panel, player, true, form);
+      updatePlayerActionButtonsState(panel, form);
     });
 
     var skillsRoot = panel.querySelector('#vjtc-skills');
 
     panel.querySelector('#vjtc-add-skill').addEventListener('click', function () {
-      skillsRoot.appendChild(createSkillRow('UM_SERWIS', 8, sim.CONFIG.maxLevel));
+      var code = 'UM_SERWIS';
+      var hasPlayer = Boolean(getActivePlayer(panel, form));
+      skillsRoot.appendChild(createSkillRow(
+        code,
+        getDefaultSkillLevel(panel, form, code),
+        sim.CONFIG.maxLevel,
+        !hasPlayer
+      ));
     });
 
     panel.addEventListener('click', function (event) {
@@ -450,6 +595,8 @@
     panel.querySelector('#vjtc-calculate').addEventListener('click', function () {
       renderResults(panel, collectInput(panel));
     });
+
+    ensurePanelControls(panel, form);
 
     return panel;
   }
@@ -552,6 +699,7 @@
     var panel = dom.getVisibleElementById(document, PANEL_ID) || ensurePanel(form);
     refreshPlayerSelect(panel, form);
     refreshPoolFromForm(panel, form);
+    ensurePanelControls(panel, form);
 
     if (!panel.dataset.scheduleRequested) {
       panel.dataset.scheduleRequested = '1';
