@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Volleyball junior training calculator
 // @namespace    https://vm-manager.org/
-// @version      0.2.0
+// @version      0.2.5
 // @description  Projects junior academy skill growth with comparable allocation strategies.
 // @match        *://*.vm-manager.org/*
 // @match        *://vm-manager.org/*
@@ -352,7 +352,7 @@
       + skillCodes.map(function (code) {
         return '<th>' + escapeHtml(skillLabelByCode[code] || code) + '</th>';
       }).join('')
-      + '<th>Do celu?</th><th>Treningi</th></tr>';
+      + '<th>Do celu?</th><th>Skoki</th></tr>';
 
     var body = results.map(function (result) {
       var meta = sim.STRATEGY_META[result.strategy] || { label: result.strategy };
@@ -373,13 +373,13 @@
         + '<td>' + escapeHtml(meta.label) + '</td>'
         + cells
         + '<td>' + escapeHtml(result.allTargetsReached ? 'tak' : 'nie') + '</td>'
-        + '<td>' + escapeHtml(result.trainingsUsed + '/' + result.budget) + '</td>'
+        + '<td>' + escapeHtml(String(result.totalLevelUps)) + '</td>'
         + '</tr>';
     }).join('');
 
     var first = results[0] || null;
     var meta = first
-      ? '<div class="vjtc-meta">Horyzont: ' + first.careerDays + ' dni | Budzet treningow: ~' + first.budget
+      ? '<div class="vjtc-meta">Horyzont: ' + first.careerDays + ' dni | Treningi: ~' + first.budget
       + (first.wastedPoints ? ' | Stracone pkt (cap): ' + first.wastedPoints : '')
       + '</div>'
       : '';

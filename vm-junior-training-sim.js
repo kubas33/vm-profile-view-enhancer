@@ -156,6 +156,7 @@
         code: skill.code,
         level: Number(skill.level),
         progress: 0,
+        levelUps: 0,
         targetLevel: normalizeTargetLevel(skill.targetLevel != null ? skill.targetLevel : defaultTargetLevel),
       };
     });
@@ -179,7 +180,7 @@
     skill.progress += 1;
 
     if (skill.progress < needed) {
-      return;
+      return false;
     }
 
     if (skill.level >= 30 - CONFIG.levelEpsilon) {
@@ -189,6 +190,8 @@
     }
 
     skill.progress = 0;
+    skill.levelUps += 1;
+    return true;
   }
 
   function createStrategy(strategyId) {
@@ -292,6 +295,7 @@
     var careerDays = getCareerDays(age, daysLeftInSeason, seasonDays);
     var budget = totalTrainingBudget(pool, careerDays);
     var trainingsUsed = 0;
+    var totalLevelUps = 0;
     var wastedPoints = 0;
     var seasonIndex;
     var dayIndex;
@@ -322,7 +326,9 @@
             break;
           }
 
-          applyTraining(skills[skillIndex], season.age);
+          if (applyTraining(skills[skillIndex], season.age)) {
+            totalLevelUps += 1;
+          }
           pool -= 1;
           trainingsUsed += 1;
         }
@@ -338,6 +344,7 @@
       careerDays: careerDays,
       budget: budget,
       trainingsUsed: trainingsUsed,
+      totalLevelUps: totalLevelUps,
       wastedPoints: wastedPoints,
       skills: skills.map(function (skill) {
         var inputSkill = (input.skills || []).find(function (item) {
@@ -354,6 +361,7 @@
           targetLevel: skill.targetLevel,
           reachedTarget: !isBelowTarget(skill.level, skill.targetLevel),
           remainingTrainingsToTarget: remaining,
+          levelUps: skill.levelUps,
         };
       }),
       allTargetsReached: skills.every(function (skill) {

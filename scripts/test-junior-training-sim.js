@@ -7,6 +7,18 @@ var sim = require('../vm-junior-training-sim.js');
 
 assert.strictEqual(sim.trainingsRequiredForSkill(7, 30, 16), 135, '7->30 at age 16 should cost 135 trainings');
 assert.strictEqual(sim.trainingsRequiredForSkill(7, 30.5, 16), 142, '7->30.5 at age 16 should cost 142 trainings');
+
+var soloResult = sim.simulate({
+  age: 16,
+  daysLeftInSeason: 500,
+  seasonDays: 90,
+  trainingPool: 0,
+  strategy: 'priority',
+  skills: [{ code: 'UM_PRZYJECIE', level: 7, targetLevel: 30.5 }],
+});
+
+assert.strictEqual(soloResult.totalLevelUps, 24, '7->30.5 should produce 24 attribute level-ups');
+assert.strictEqual(soloResult.skills[0].levelUps, 24, 'single skill should track its own level-ups');
 assert.strictEqual(sim.sessionsToLevelUp(30, 16), 7, '30->30.5 should use 25+ tier at age 16');
 assert.strictEqual(sim.sessionsToLevelUp(14, 16), 5, '14->15 should still use tier below 15');
 assert.strictEqual(sim.sessionsToLevelUp(15, 16), 6, '15->16 should use tier below 25');
