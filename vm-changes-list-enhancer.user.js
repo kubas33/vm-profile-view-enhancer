@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VM Changes List Enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.1.1
+// @version      0.1.2
 // @description  Sorting and filtering for VM Manager tactic changes list view.
 // @match        *://*.vm-manager.org/*
 // @match        *://vm-manager.org/*
@@ -284,20 +284,8 @@
     return parseChangeRowsFromHtmlRegex(html);
   }
 
-  function getBlockRowFromInnerRow(row) {
-    var innerTable = row.closest('table');
-    var tableCell = innerTable ? innerTable.parentNode : null;
-    var blockRow = tableCell && tableCell.parentNode ? tableCell.parentNode : null;
-
-    if (!blockRow || blockRow.tagName.toLowerCase() !== 'tr') {
-      return null;
-    }
-
-    return blockRow;
-  }
-
-  function getListTableFromBlockRow(blockRow) {
-    var parent = blockRow ? blockRow.parentNode : null;
+  function getTableParent(node) {
+    var parent = node ? node.parentNode : null;
 
     if (!parent) {
       return null;
@@ -312,6 +300,59 @@
     }
 
     return null;
+  }
+
+  function getBlockRowFromInnerRow(row) {
+    var innerTable;
+    var tableCell;
+    var blockRow;
+    var listTable;
+    var node;
+
+    if (!row) {
+      return null;
+    }
+
+    innerTable = row.closest('table');
+    if (innerTable) {
+      tableCell = innerTable.parentNode;
+      if (tableCell && tableCell.tagName.toLowerCase() === 'td') {
+        blockRow = tableCell.parentNode;
+        if (blockRow && blockRow.tagName.toLowerCase() === 'tr') {
+          return blockRow;
+        }
+      }
+    }
+
+    node = row;
+    while (node && node.tagName && node.tagName.toLowerCase() !== 'body') {
+      if (node.tagName.toLowerCase() === 'tr') {
+        listTable = getTableParent(node);
+        if (listTable &&
+          listTable.querySelector('span.small_link[onclick*="ChangeEdit"], span.small_link[OnClick*="ChangeEdit"]')) {
+          return node;
+        }
+      }
+      node = node.parentNode;
+    }
+
+    return null;
+  }
+
+  function findListContainer(blockRow, headerRow) {
+    var node = blockRow;
+
+    while (node && node.tagName && node.tagName.toLowerCase() !== 'body') {
+      if (node.tagName.toLowerCase() === 'table') {
+        if (findChangeDataRowsInScope(node).length &&
+          (!headerRow || node.contains(headerRow))) {
+          return node;
+        }
+      }
+      node = node.parentNode;
+    }
+
+    return getTableParent(blockRow);
   }
 
   function getChangeBlock(row) {
@@ -342,39 +383,51 @@
   function findChangesListRoot(documentRef) {
     var headerRow = findChangesHeaderRow(documentRef);
     var headerBlockRow;
-    var headerListTable;
+    var listTable;
     var dataRows;
     var dataBlockRow;
-    var dataListTable;
 
     if (!headerRow) {
       return null;
     }
 
     headerBlockRow = getBlockRowFromInnerRow(headerRow);
-    headerListTable = getListTableFromBlockRow(headerBlockRow);
-
-    if (!headerBlockRow || !headerListTable) {
+    if (!headerBlockRow) {
       return null;
     }
 
-    dataRows = findChangeDataRowsInScope(headerListTable);
+    listTable = findListContainer(headerBlockRow, headerRow);
+    dataRows = listTable ? findChangeDataRowsInScope(listTable) : [];
+
+    if (!dataRows.length) {
+      dataRows = findChangeDataRowsInScope(documentRef).filter(function (row) {
+        var blockRow = getBlockRowFromInnerRow(row);
+        return blockRow && (headerRow.compareDocumentPosition(blockRow) & 4);
+      });
+    }
 
     if (!dataRows.length) {
       return null;
     }
 
-    dataBlockRow = getBlockRowFromInnerRow(dataRows[0]);
-    dataListTable = getListTableFromBlockRow(dataBlockRow);
+    if (!listTable) {
+      dataBlockRow = getBlockRowFromInnerRow(dataRows[0]);
+      listTable = dataBlockRow ? findListContainer(dataBlockRow, headerRow) : null;
+    }
 
-    if (!dataBlockRow || !dataListTable || headerListTable !== dataListTable) {
+    if (!listTable) {
+      return null;
+    }
+
+    dataRows = findChangeDataRowsInScope(listTable);
+    if (!dataRows.length) {
       return null;
     }
 
     return {
       headerRow: headerRow,
       headerBlockRow: headerBlockRow,
-      listTable: headerListTable,
+      listTable: listTable,
       dataRows: dataRows
     };
   }
@@ -919,6 +972,11 @@
   function mountFilterPanel(documentRef, listRoot, panel) {
     var panelRow = documentRef.getElementById(PANEL_ROW_ID);
     var panelCell;
+    var mountParent = listRoot.headerBlockRow.parentNode;
+
+    if (!mountParent) {
+      return;
+    }
 
     if (!panelRow) {
       panelRow = documentRef.createElement('tr');
@@ -938,11 +996,11 @@
       }
     }
 
-    if (panelRow.parentNode && panelRow.parentNode !== listRoot.listTable) {
+    if (panelRow.parentNode && panelRow.parentNode !== mountParent) {
       panelRow.remove();
     }
 
-    listRoot.listTable.insertBefore(panelRow, listRoot.headerBlockRow);
+    mountParent.insertBefore(panelRow, listRoot.headerBlockRow);
   }
 
   function cleanupChangesList(documentRef) {
