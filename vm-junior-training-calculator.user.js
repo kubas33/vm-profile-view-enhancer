@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Volleyball junior training calculator
 // @namespace    https://vm-manager.org/
-// @version      0.2.5
+// @version      0.3.0
 // @description  Projects junior academy skill growth with comparable allocation strategies.
 // @match        *://*.vm-manager.org/*
 // @match        *://vm-manager.org/*
@@ -12,6 +12,7 @@
 // @require      https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-dom-utils.js
 // @require      https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-junior-training-sim.js
 // @require      https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-junior-training-parser.js
+// @require      https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-matches-schedule.js
 // ==/UserScript==
 
 (function () {
@@ -20,14 +21,18 @@
   var dom = window.VMDomUtils;
   var sim = window.VMJuniorTrainingSim;
   var parser = window.VMJuniorTrainingParser;
+  var schedule = window.VMMatchesSchedule;
 
-  if (!dom || !sim || !parser) {
-    throw new Error('Junior Training Calculator wymaga vm-dom-utils.js, vm-junior-training-sim.js i vm-junior-training-parser.js.');
+  if (!dom || !sim || !parser || !schedule) {
+    throw new Error('Junior Training Calculator wymaga vm-dom-utils.js, vm-junior-training-sim.js, vm-junior-training-parser.js i vm-matches-schedule.js.');
   }
 
   var PANEL_ID = 'vjtc-panel';
   var FORM_ID = 'young_trening_options';
   var DEFAULT_STRATEGIES = ['priority', 'roundRobin'];
+  var SCHEDULE_CACHE_KEY = 'vjtc.matchesSchedule.v3';
+  var SCHEDULE_CACHE_TTL_MS = 5 * 60 * 1000;
+  var schedulePromise = null;
 
   var SKILL_OPTIONS = [
     { code: 'UM_PRZYJECIE', label: 'Przyjecie' },
@@ -70,7 +75,10 @@
       + '.vjtc-grid label{display:flex;flex-direction:column;gap:3px;}'
       + '.vjtc-grid input,.vjtc-grid select{width:100%;box-sizing:border-box;}'
       + '.vjtc-skills{margin:8px 0;}'
-      + '.vjtc-skill-row{display:grid;grid-template-columns:1.4fr .7fr .7fr auto;gap:6px;margin-bottom:6px;}'
+      + '.vjtc-skill-row{display:grid;grid-template-columns:auto 1.3fr .65fr .65fr auto;gap:6px;margin-bottom:6px;align-items:center;}'
+      + '.vjtc-skill-order{display:flex;flex-direction:column;gap:2px;}'
+      + '.vjtc-skill-order .vjtc-btn{padding:1px 5px;line-height:1;}'
+      + '.vjtc-field-hint{margin-top:2px;color:#8eb6ca;font-size:10px;min-height:12px;}'
       + '.vjtc-strategies{display:flex;flex-wrap:wrap;gap:10px;margin:8px 0;}'
       + '.vjtc-strategies label{display:inline-flex;align-items:center;gap:4px;}'
       + '.vjtc-actions{margin:8px 0;}'
@@ -144,11 +152,129 @@
     var row = document.createElement('div');
     row.className = 'vjtc-skill-row';
     row.innerHTML = ''
+      + '<div class="vjtc-skill-order">'
+      + '<button type="button" class="vjtc-btn vjtc-move-up" title="Wyzej priorytet">▲</button>'
+      + '<button type="button" class="vjtc-btn vjtc-move-down" title="Nizej priorytet">▼</button>'
+      + '</div>'
       + '<select class="vjtc-skill-code">' + buildSkillOptions(code || 'UM_PRZYJECIE') + '</select>'
       + '<input class="vjtc-skill-level" type="number" min="0" max="30.5" step="0.5" value="' + escapeHtml(level == null ? 10 : level) + '">'
       + '<input class="vjtc-skill-target" type="number" min="0" max="30.5" step="0.5" value="' + escapeHtml(targetLevel == null ? sim.CONFIG.maxLevel : targetLevel) + '" title="Cel">'
       + '<button type="button" class="vjtc-btn vjtc-remove-skill">Usun</button>';
     return row;
+  }
+
+  function moveSkillRow(row, direction) {
+    var parent = row.parentElement;
+
+    if (!parent) {
+      return;
+    }
+
+    if (direction < 0 && row.previousElementSibling) {
+      parent.insertBefore(row, row.previousElementSibling);
+      return;
+    }
+
+    if (direction > 0 && row.nextElementSibling) {
+      parent.insertBefore(row.nextElementSibling, row);
+    }
+  }
+
+  function readScheduleCache() {
+    try {
+      var raw = window.sessionStorage.getItem(SCHEDULE_CACHE_KEY);
+      if (!raw) {
+        return null;
+      }
+
+      var cached = JSON.parse(raw);
+      if (!cached || Date.now() - cached.savedAt > SCHEDULE_CACHE_TTL_MS) {
+        return null;
+      }
+
+      return cached.data;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function writeScheduleCache(data) {
+    try {
+      window.sessionStorage.setItem(SCHEDULE_CACHE_KEY, JSON.stringify({
+        savedAt: Date.now(),
+        data: data,
+      }));
+    } catch (error) {
+      // ignore storage failures
+    }
+  }
+
+  function getTeamIdFromDocument() {
+    return schedule.findTeamIdFromHtml(document.documentElement.innerHTML);
+  }
+
+  function fetchSeasonScheduleData() {
+    var cached = readScheduleCache();
+
+    if (cached) {
+      return Promise.resolve(cached);
+    }
+
+    if (schedulePromise) {
+      return schedulePromise;
+    }
+
+    schedulePromise = schedule.fetchSeasonSchedule(window.fetch, {
+      teamId: getTeamIdFromDocument(),
+    }).then(function (data) {
+      writeScheduleCache(data);
+      return data;
+    }).finally(function () {
+      schedulePromise = null;
+    });
+
+    return schedulePromise;
+  }
+
+  function applySeasonScheduleToPanel(panel, data) {
+    var daysInput = panel.querySelector('#vjtc-days-left');
+    var hint = panel.querySelector('#vjtc-days-left-hint');
+
+    if (!data || !daysInput || document.activeElement === daysInput) {
+      return;
+    }
+
+    if (data.daysLeftInSeason != null) {
+      daysInput.value = String(data.daysLeftInSeason);
+    }
+
+    if (hint) {
+      if (data.seasonEndDate && data.lastMatchDate) {
+        hint.textContent = 'Aut. (liga): ' + data.lastMatchDate + ' + ' + data.bufferDays
+          + ' dni = ' + data.seasonEndDate
+          + (data.currentDate ? ' | dziś ' + data.currentDate : '')
+          + (data.leagueMatchCount ? ' | mecze lig.: ' + data.leagueMatchCount : '')
+          + (data.monthsWithLeagueMatches ? ' | mies. lig.: ' + data.monthsWithLeagueMatches : '')
+          + (data.seasonEndedBecauseEmptyMonth ? ' (koniec po mies. bez ligi)' : '');
+      } else {
+        hint.textContent = 'Nie udało się odczytać terminarza.';
+      }
+    }
+  }
+
+  function refreshDaysLeftFromSchedule(panel) {
+    return fetchSeasonScheduleData()
+      .then(function (data) {
+        applySeasonScheduleToPanel(panel, data);
+        return data;
+      })
+      .catch(function () {
+        var hint = panel.querySelector('#vjtc-days-left-hint');
+        if (hint) {
+          hint.textContent = 'Terminarz niedostępny — ustaw dni ręcznie.';
+        }
+        return null;
+      });
   }
 
   function clearSkillRows(panel) {
@@ -249,10 +375,12 @@
       + '</div>'
       + '<div class="vjtc-grid">'
       + '<label>Wiek<input id="vjtc-age" type="number" min="14" max="18" step="1" value="16"></label>'
-      + '<label>Dni do konca sezonu<input id="vjtc-days-left" type="number" min="0" step="1" value="45"></label>'
+      + '<label>Dni do konca sezonu<input id="vjtc-days-left" type="number" min="0" step="1" value="45">'
+      + '<span class="vjtc-field-hint" id="vjtc-days-left-hint"></span></label>'
       + '<label>Pula pkt<input id="vjtc-pool" type="number" min="0" max="40" step="1" value="' + escapeHtml(defaultPool) + '"></label>'
       + '<label>Dni sezonu<input id="vjtc-season-days" type="number" min="1" step="1" value="' + escapeHtml(sim.CONFIG.seasonDays) + '"></label>'
       + '</div>'
+      + '<p class="vjtc-hint">Kolejnosc umiejetnosci = priorytet strategii „Priorytet” (▲▼).</p>'
       + '<div class="vjtc-skills" id="vjtc-skills"></div>'
       + '<div class="vjtc-actions">'
       + '<button type="button" class="vjtc-btn" id="vjtc-add-skill">Dodaj umiejetnosc</button>'
@@ -299,11 +427,23 @@
     });
 
     panel.addEventListener('click', function (event) {
+      var skillRow = event.target.closest('.vjtc-skill-row');
+
       if (event.target.classList.contains('vjtc-remove-skill')) {
         var rows = skillsRoot.querySelectorAll('.vjtc-skill-row');
-        if (rows.length > 1) {
-          event.target.closest('.vjtc-skill-row').remove();
+        if (rows.length > 1 && skillRow) {
+          skillRow.remove();
         }
+        return;
+      }
+
+      if (event.target.classList.contains('vjtc-move-up') && skillRow) {
+        moveSkillRow(skillRow, -1);
+        return;
+      }
+
+      if (event.target.classList.contains('vjtc-move-down') && skillRow) {
+        moveSkillRow(skillRow, 1);
       }
     });
 
@@ -412,6 +552,11 @@
     var panel = dom.getVisibleElementById(document, PANEL_ID) || ensurePanel(form);
     refreshPlayerSelect(panel, form);
     refreshPoolFromForm(panel, form);
+
+    if (!panel.dataset.scheduleRequested) {
+      panel.dataset.scheduleRequested = '1';
+      refreshDaysLeftFromSchedule(panel);
+    }
   }
 
   function scheduleEnhance() {

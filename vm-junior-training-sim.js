@@ -26,7 +26,7 @@
     dailyGain: 4,
     poolCap: 40,
     maxLevel: 30.5,
-    seasonDays: 90,
+    seasonDays: 60,
     tierBelow5: 4,
     levelEpsilon: 0.001,
   };
