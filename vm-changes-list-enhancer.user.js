@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VM Changes List Enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.1.6
+// @version      0.1.7
 // @description  Sorting and filtering for VM Manager tactic changes list view.
 // @match        *://*.vm-manager.org/*
 // @match        *://vm-manager.org/*
@@ -55,7 +55,7 @@
   var lastEnhanceKey = '';
   var activeListContext = null;
 
-  function findChangeEditAnchor(documentRef, scope) {
+  function findChangeEditAnchor(documentRef, scope, requireVisible) {
     var root = scope && scope.querySelectorAll ? scope : documentRef;
     var links = Array.prototype.slice.call(root.querySelectorAll('span.small_link')).filter(function (el) {
       return getOnClick(el).indexOf('ChangeEdit&changeId=') !== -1;
@@ -64,16 +64,44 @@
       return dom.isVisibleElement(el);
     });
 
-    return visibleLink || links[0] || null;
+    if (requireVisible === false) {
+      return visibleLink || links[0] || null;
+    }
+
+    return visibleLink || null;
   }
 
   function hasChangesListContent(documentRef) {
-    return Boolean(findChangeEditAnchor(documentRef)) ||
-      Boolean(documentRef.getElementById(PANEL_ID));
+    return Boolean(findChangeEditAnchor(documentRef, null, false)) ||
+      Boolean(dom.getVisibleElementById(documentRef, PANEL_ID));
+  }
+
+  function isContextAlive(context) {
+    if (!context || !context.scope || !context.scope.isConnected) {
+      return false;
+    }
+
+    if (!context.mountTarget || !context.mountTarget.parent || !context.mountTarget.parent.isConnected) {
+      return false;
+    }
+
+    return context.dataRows.some(function (row) {
+      return row && row.isConnected;
+    });
+  }
+
+  function invalidateStaleContext() {
+    if (activeListContext && !isContextAlive(activeListContext)) {
+      activeListContext = null;
+      lastEnhanceKey = '';
+      return true;
+    }
+
+    return false;
   }
 
   function getCachedListRoot() {
-    if (!activeListContext) {
+    if (!activeListContext || !isContextAlive(activeListContext)) {
       return null;
     }
 
@@ -153,6 +181,8 @@
     var editAnchor;
     var vmPanel;
     var node;
+
+    invalidateStaleContext();
 
     if (activeListContext && activeListContext.scope) {
       return activeListContext.scope;
@@ -319,12 +349,14 @@
       return false;
     }
 
-    if (documentRef.getElementById(PANEL_ID)) {
-      return true;
+    invalidateStaleContext();
+
+    if (isContextAlive(activeListContext)) {
+      return Boolean(findChangesHeaderRow(documentRef, activeListContext.scope, true));
     }
 
-    if (activeListContext && activeListContext.dataRows && activeListContext.dataRows.length) {
-      return true;
+    if (!findChangeEditAnchor(documentRef, null, true)) {
+      return false;
     }
 
     return Boolean(findChangesListRoot(documentRef));
@@ -1231,8 +1263,9 @@
 
   function cleanupChangesList(documentRef, force) {
     var listRoot = getCachedListRoot() || findChangesListRoot(documentRef);
+    var panel = documentRef.getElementById(PANEL_ID);
 
-    if (!force && (documentRef.getElementById(PANEL_ID) || activeListContext)) {
+    if (!force && panel && panel.isConnected && isContextAlive(activeListContext)) {
       return;
     }
 
@@ -1240,7 +1273,13 @@
 
     if (listRoot) {
       listRoot.dataRows.forEach(function (row) {
-        var block = getChangeBlock(row);
+        var block;
+
+        if (!row || !row.isConnected) {
+          return;
+        }
+
+        block = getChangeBlock(row);
         if (block) {
           setBlockVisible(block, true);
         }
@@ -1267,7 +1306,9 @@
       return;
     }
 
-    listRoot = findChangesListRoot(documentRef) || getCachedListRoot();
+    invalidateStaleContext();
+
+    listRoot = findChangesListRoot(documentRef);
     if (!listRoot) {
       return;
     }
@@ -1333,7 +1374,7 @@
       return;
     }
 
-    infoLog('VM Changes List Enhancer v0.1.6 — debug: localStorage.setItem("vtcl.debug","1")');
+    infoLog('VM Changes List Enhancer v0.1.7 — debug: localStorage.setItem("vtcl.debug","1")');
     debugLog('start');
 
     if (root) {
@@ -1345,7 +1386,7 @@
       isActive: isChangesListView,
       onEnhance: enhanceChangesList,
       onDeactivate: function (documentRef) {
-        cleanupChangesList(documentRef, false);
+        cleanupChangesList(documentRef, true);
       },
       delayMs: 200
     }).start();
