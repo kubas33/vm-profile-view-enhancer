@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Volleyball junior training calculator
 // @namespace    https://vm-manager.org/
-// @version      0.5.5
+// @version      0.5.6
 // @description  Projects junior academy skill growth with comparable allocation strategies.
 // @match        *://*.vm-manager.org/*
 // @match        *://vm-manager.org/*
@@ -24,7 +24,7 @@
   var sim = window.VMJuniorTrainingSim;
   var parser = window.VMJuniorTrainingParser;
   var schedule = window.VMMatchesSchedule;
-  var CALCULATOR_VERSION = '0.5.5';
+  var CALCULATOR_VERSION = '0.5.6';
   var SKILLS_HINT_EMPTY = 'Nie udało się ustalić rekomendowanych umiejętności — użyj «Wczytaj wszystkie»';
 
   if (!dom || !positionRules || !sim || !parser || !schedule) {
@@ -194,6 +194,21 @@
       .trim();
   }
 
+  function htmlToText(value) {
+    return String(value || '')
+      .replace(/<br\s*\/?>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&euro;/gi, '€')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#039;/gi, "'")
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
   function getFallbackPositionKey(position) {
     var normalized = normalizeVmText(position);
 
@@ -283,6 +298,42 @@
     return attributes;
   }
 
+  function readScoutCellPairsFromHtml(source) {
+    var pairs = [];
+    var regex = /<td\b[^>]*>([\s\S]*?)<\/td>\s*(?=<td\b[^>]*>([\s\S]*?)<\/td>)/gi;
+    var match;
+
+    while ((match = regex.exec(String(source || ''))) !== null) {
+      pairs.push([
+        htmlToText(match[1]),
+        htmlToText(match[2]),
+      ]);
+    }
+
+    return pairs;
+  }
+
+  function readScoutAttributesFromHtml(source) {
+    var attributes = {};
+
+    readScoutCellPairsFromHtml(source).forEach(function (pair) {
+      var code = getCodeForScoutLabel(pair[0]);
+      var value;
+
+      if (!code) {
+        return;
+      }
+
+      value = parseNumber(pair[1], null);
+
+      if (value !== null) {
+        attributes[code] = value;
+      }
+    });
+
+    return attributes;
+  }
+
   function readScoutPositionFromDom() {
     var rows = readScoutRowsFromDom();
     var position = '';
@@ -292,6 +343,23 @@
 
       if (normalizeVmText(label) === 'pozycja') {
         position = cells[cells.length - 1];
+      }
+    });
+
+    return position;
+  }
+
+  function readScoutPositionFromHtml(source) {
+    var position = '';
+    var directMatch = String(source || '').match(/<td\b[^>]*>\s*Pozycja\s*<\/td>\s*<td\b[^>]*>([\s\S]*?)<\/td>/i);
+
+    if (directMatch) {
+      return htmlToText(directMatch[1]);
+    }
+
+    readScoutCellPairsFromHtml(source).forEach(function (pair) {
+      if (normalizeVmText(pair[0]) === 'pozycja') {
+        position = pair[1];
       }
     });
 
@@ -885,15 +953,27 @@
 
     if (player.playerId === 'scout') {
       var domAttributes = readScoutAttributesFromDom();
+      var htmlSource = document.documentElement ? document.documentElement.innerHTML : '';
+      var htmlAttributes = readScoutAttributesFromHtml(htmlSource);
 
       if (!position) {
         position = readScoutPositionFromDom();
+      }
+
+      if (!position) {
+        position = readScoutPositionFromHtml(htmlSource);
       }
 
       Object.keys(domAttributes).forEach(function (code) {
         attributes[code] = domAttributes[code];
       });
 
+      Object.keys(htmlAttributes).forEach(function (code) {
+        attributes[code] = htmlAttributes[code];
+      });
+
+      player._vjtcDomAttributeCount = Object.keys(domAttributes).length;
+      player._vjtcHtmlAttributeCount = Object.keys(htmlAttributes).length;
       player.position = position;
       player.attributes = attributes;
     }
@@ -1236,6 +1316,8 @@
 
     skills = getRecommendedSkillsForPlayer(candidate);
     panel.dataset.scoutAttributeCount = String(Object.keys(candidate.attributes || {}).length);
+    panel.dataset.scoutDomAttributeCount = String(candidate._vjtcDomAttributeCount || 0);
+    panel.dataset.scoutHtmlAttributeCount = String(candidate._vjtcHtmlAttributeCount || 0);
     panel.dataset.scoutRecommendedCount = String(skills.length);
 
     setSkillRows(panel, skills, null);
