@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Volleyball junior training calculator
 // @namespace    https://vm-manager.org/
-// @version      0.5.3
+// @version      0.5.4
 // @description  Projects junior academy skill growth with comparable allocation strategies.
 // @match        *://*.vm-manager.org/*
 // @match        *://vm-manager.org/*
@@ -64,6 +64,72 @@
     return map;
   }, {});
 
+  var SCOUT_SKILL_LABELS = {
+    'serwis': 'UM_SERWIS',
+    'sila serwisu': 'UM_SILA_SERWISU',
+    'przyjecie': 'UM_PRZYJECIE',
+    'rozgrywanie': 'UM_ROZGRYWANIE',
+    'wystawa': 'UM_WYSTAWA',
+    'atak ze skrzydla': 'UM_ATAK_ZE_SKRZYDLA',
+    'atak ze srodka': 'UM_ATAK_ZE_SRODKA',
+    'atak z 2 linii': 'UM_ATAK_2L',
+    'omijanie bloku': 'UM_OMIJANIE_BLOKU',
+    'kiwka': 'UM_KIWKA',
+    'atak blok-aut': 'UM_ATAK_BO',
+    'obrona': 'UM_OBRONA',
+    'asekuracja': 'UM_ASEKURACJA',
+    'blok': 'UM_BLOK_AKTYWNY',
+    'blok pasywny': 'UM_BLOK_PASYWNY',
+    'ustawianie sie do bloku': 'UM_USTAWIANIE',
+  };
+
+  var FALLBACK_RECOMMENDED_CODES = {
+    'atakujacy': [
+      'UM_USTAWIANIE',
+      'UM_BLOK_AKTYWNY',
+      'UM_ASEKURACJA',
+      'UM_OBRONA',
+      'UM_SERWIS',
+      'UM_ATAK_ZE_SKRZYDLA',
+      'UM_KIWKA',
+      'UM_ATAK_2L',
+      'UM_OMIJANIE_BLOKU',
+    ],
+    'libero': [
+      'UM_PRZYJECIE',
+      'UM_OBRONA',
+      'UM_ASEKURACJA',
+    ],
+    'przyjmujacy': [
+      'UM_PRZYJECIE',
+      'UM_OBRONA',
+      'UM_ASEKURACJA',
+      'UM_USTAWIANIE',
+      'UM_BLOK_AKTYWNY',
+      'UM_SERWIS',
+      'UM_ATAK_ZE_SKRZYDLA',
+      'UM_KIWKA',
+      'UM_ATAK_2L',
+      'UM_OMIJANIE_BLOKU',
+    ],
+    'rozgrywajacy': [
+      'UM_ROZGRYWANIE',
+      'UM_WYSTAWA',
+      'UM_OBRONA',
+      'UM_ASEKURACJA',
+      'UM_USTAWIANIE',
+      'UM_BLOK_AKTYWNY',
+    ],
+    'srodkowy': [
+      'UM_ATAK_ZE_SRODKA',
+      'UM_OMIJANIE_BLOKU',
+      'UM_USTAWIANIE',
+      'UM_BLOK_AKTYWNY',
+      'UM_SERWIS',
+      'UM_KIWKA',
+    ],
+  };
+
   function injectStyles() {
     if (document.getElementById('vjtc-styles')) {
       return;
@@ -115,6 +181,149 @@
   function parseNumber(value, fallback) {
     var parsed = Number(String(value).replace(',', '.'));
     return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  function normalizeVmText(value) {
+    return String(value || '')
+      .toLowerCase()
+      .replace(/ł/g, 'l')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function getFallbackPositionKey(position) {
+    var normalized = normalizeVmText(position);
+
+    if (normalized === 'at') {
+      return 'atakujacy';
+    }
+    if (normalized === 'p') {
+      return 'przyjmujacy';
+    }
+    if (normalized === 'r') {
+      return 'rozgrywajacy';
+    }
+    if (normalized === 'sr') {
+      return 'srodkowy';
+    }
+    if (normalized === 'l') {
+      return 'libero';
+    }
+
+    return normalized;
+  }
+
+  function getCodeForScoutLabel(label) {
+    var normalized = normalizeVmText(label);
+    var fromRules;
+
+    if (SCOUT_SKILL_LABELS[normalized]) {
+      return SCOUT_SKILL_LABELS[normalized];
+    }
+
+    if (positionRules.ATTRIBUTE_LABEL_TO_CODE) {
+      fromRules = positionRules.ATTRIBUTE_LABEL_TO_CODE[label];
+      if (fromRules) {
+        return fromRules;
+      }
+    }
+
+    return '';
+  }
+
+  function normalizeAttributeMap(attributes) {
+    var result = {};
+
+    Object.keys(attributes || {}).forEach(function (key) {
+      var code = /^UM_/.test(key) ? key : getCodeForScoutLabel(key);
+      var value = parseNumber(attributes[key], null);
+
+      if (code && value !== null) {
+        result[code] = value;
+      }
+    });
+
+    return result;
+  }
+
+  function readScoutRowsFromDom() {
+    return Array.prototype.map.call(document.querySelectorAll('tr'), function (row) {
+      return Array.prototype.map.call(row.children || [], function (cell) {
+        return String(cell.textContent || '').replace(/\s+/g, ' ').trim();
+      }).filter(function (text) {
+        return text !== '';
+      });
+    }).filter(function (cells) {
+      return cells.length >= 2;
+    });
+  }
+
+  function readScoutAttributesFromDom() {
+    var attributes = {};
+
+    readScoutRowsFromDom().forEach(function (cells) {
+      var label = cells[cells.length - 2];
+      var code = getCodeForScoutLabel(label);
+      var value;
+
+      if (!code) {
+        return;
+      }
+
+      value = parseNumber(cells[cells.length - 1], null);
+
+      if (value !== null) {
+        attributes[code] = value;
+      }
+    });
+
+    return attributes;
+  }
+
+  function readScoutPositionFromDom() {
+    var rows = readScoutRowsFromDom();
+    var position = '';
+
+    rows.forEach(function (cells) {
+      var label = cells[cells.length - 2];
+
+      if (normalizeVmText(label) === 'pozycja') {
+        position = cells[cells.length - 1];
+      }
+    });
+
+    return position;
+  }
+
+  function getFallbackRecommendedSkills(position, attributes) {
+    var positionKey = getFallbackPositionKey(position);
+    var codes = FALLBACK_RECOMMENDED_CODES[positionKey] || [];
+    var normalizedAttributes = normalizeAttributeMap(attributes);
+
+    return codes.reduce(function (items, code) {
+      var level = normalizedAttributes[code];
+
+      if (
+        level == null
+        || Number.isNaN(Number(level))
+        || (
+          positionRules.isTrainableLevel
+            ? !positionRules.isTrainableLevel(level, sim.CONFIG.maxLevel)
+            : level >= sim.CONFIG.maxLevel - 0.001
+        )
+      ) {
+        return items;
+      }
+
+      items.push({
+        code: code,
+        level: Number(level),
+        targetLevel: sim.CONFIG.maxLevel,
+      });
+      return items;
+    }, []);
   }
 
   function parseTrainingPoolFromForm(form) {
@@ -662,13 +871,43 @@
   }
 
   function getRecommendedSkillsForPlayer(player) {
+    var position;
+    var attributes;
+    var skills;
+
     if (!player) {
       return [];
     }
 
-    return positionRules.getRecommendedTrainableSkills(player.position, player.attributes, {
-      maxLevel: sim.CONFIG.maxLevel,
-    });
+    position = player.position || '';
+    attributes = normalizeAttributeMap(player.attributes);
+
+    if (player.playerId === 'scout') {
+      var domAttributes = readScoutAttributesFromDom();
+
+      if (!position) {
+        position = readScoutPositionFromDom();
+      }
+
+      Object.keys(domAttributes).forEach(function (code) {
+        attributes[code] = domAttributes[code];
+      });
+
+      player.position = position;
+      player.attributes = attributes;
+    }
+
+    skills = positionRules.getRecommendedTrainableSkills
+      ? positionRules.getRecommendedTrainableSkills(position, attributes, {
+        maxLevel: sim.CONFIG.maxLevel,
+      })
+      : [];
+
+    if (skills && skills.length) {
+      return skills;
+    }
+
+    return getFallbackRecommendedSkills(position, attributes);
   }
 
   function buildPlayerOptions(players, selectedId) {
