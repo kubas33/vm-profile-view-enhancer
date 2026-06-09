@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         VM Squad View Enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.2.0
+// @version      0.2.1
 // @description  Enhances VM Manager squad view with training progress and position fit.
 // @match        *://*.vm-manager.org/*
 // @match        *://vm-manager.org/*
 // @grant        none
 // @run-at       document-end
 // @require      https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-dom-utils.js
+// @require      https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-position-rules.js
 // @updateURL    https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-squad-view-enhancer.user.js
 // @downloadURL  https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-squad-view-enhancer.user.js
 // ==/UserScript==
@@ -32,9 +33,20 @@
       return null;
     }
   })();
+  var positionRules = (root && root.VMPositionRules) || (function () {
+    try {
+      return require('./vm-position-rules.js');
+    } catch (error) {
+      return null;
+    }
+  })();
 
   if (!dom) {
     throw new Error('VM Squad View Enhancer wymaga vm-dom-utils.js (@require).');
+  }
+
+  if (!positionRules) {
+    throw new Error('VM Squad View Enhancer wymaga vm-position-rules.js (@require).');
   }
 
   var STYLE_ID = 'vms-style';
@@ -80,14 +92,9 @@
     'Pensja': 'salary',
     'Wartość': 'value'
   };
-  var POSITION_SHORT_NAMES = {
-    'At': 'Atakujący',
-    'L': 'Libero',
-    'P': 'Przyjmujący',
-    'R': 'Rozgrywający',
-    'Sr': 'Środkowy',
-    'Śr': 'Środkowy'
-  };
+  var POSITION_SHORT_NAMES = positionRules.POSITION_SHORT_NAMES;
+  var ATTRIBUTE_CODES = positionRules.ATTRIBUTE_CODES;
+  var POSITION_RULES = positionRules.POSITION_RULES;
   var POSITION_FILTERS = [
     { shortName: 'At', label: 'At' },
     { shortName: 'P', label: 'P' },
@@ -95,47 +102,6 @@
     { shortName: 'Śr', label: 'Śr' },
     { shortName: 'L', label: 'L' }
   ];
-  var ATTRIBUTE_CODES = {
-    UM_SERWIS: 'Serwis',
-    UM_SILA_SERWISU: 'Siła serwisu',
-    UM_PRZYJECIE: 'Przyjęcie',
-    UM_ROZGRYWANIE: 'Rozgrywanie',
-    UM_WYSTAWA: 'Wystawa',
-    UM_ATAK_ZE_SKRZYDLA: 'Atak ze skrzydła',
-    UM_ATAK_ZE_SRODKA: 'Atak ze środka',
-    UM_ATAK_2L: 'Atak z 2 linii',
-    UM_OMIJANIE_BLOKU: 'Omijanie bloku',
-    UM_KIWKA: 'Kiwka',
-    UM_ATAK_BO: 'Atak blok-aut',
-    UM_OBRONA: 'Obrona',
-    UM_ASEKURACJA: 'Asekuracja',
-    UM_BLOK_AKTYWNY: 'Blok',
-    UM_BLOK_PASYWNY: 'Blok pasywny',
-    UM_USTAWIANIE: 'Ustawianie się do bloku'
-  };
-  var POSITION_RULES = {
-    'Atakujący': {
-      primary: ['Ustawianie się do bloku', 'Blok', 'Asekuracja', 'Obrona'],
-      secondary: ['Serwis', 'Atak ze skrzydła', 'Kiwka', 'Atak z 2 linii', 'Omijanie bloku']
-    },
-    'Libero': {
-      primary: ['Przyjęcie', 'Obrona', 'Asekuracja'],
-      secondary: []
-    },
-    'Przyjmujący': {
-      primary: ['Przyjęcie', 'Obrona', 'Asekuracja', 'Ustawianie się do bloku', 'Blok'],
-      secondary: ['Serwis', 'Atak ze skrzydła', 'Kiwka', 'Atak z 2 linii', 'Omijanie bloku']
-    },
-    'Rozgrywający': {
-      primary: ['Rozgrywanie', 'Wystawa', 'Obrona', 'Asekuracja'],
-      secondary: ['Ustawianie się do bloku', 'Blok']
-    },
-    'Środkowy': {
-      primary: ['Atak ze środka', 'Omijanie bloku', 'Ustawianie się do bloku', 'Blok'],
-      secondary: ['Serwis', 'Kiwka']
-    }
-  };
-
   var trainingPromise = null;
   var trainingState = {
     status: 'idle',

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Volleyball junior training calculator
 // @namespace    https://vm-manager.org/
-// @version      0.4.1
+// @version      0.5.0
 // @description  Projects junior academy skill growth with comparable allocation strategies.
 // @match        *://*.vm-manager.org/*
 // @match        *://vm-manager.org/*
@@ -10,6 +10,7 @@
 // @run-at       document-end
 // @grant        none
 // @require      https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-dom-utils.js
+// @require      https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-position-rules.js
 // @require      https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-junior-training-sim.js
 // @require      https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-junior-training-parser.js
 // @require      https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-matches-schedule.js
@@ -19,12 +20,14 @@
   'use strict';
 
   var dom = window.VMDomUtils;
+  var positionRules = window.VMPositionRules;
   var sim = window.VMJuniorTrainingSim;
   var parser = window.VMJuniorTrainingParser;
   var schedule = window.VMMatchesSchedule;
+  var SKILLS_HINT_EMPTY = 'Nie udało się ustalić rekomendowanych umiejętności — użyj «Wczytaj wszystkie»';
 
-  if (!dom || !sim || !parser || !schedule) {
-    throw new Error('Junior Training Calculator wymaga vm-dom-utils.js, vm-junior-training-sim.js, vm-junior-training-parser.js i vm-matches-schedule.js.');
+  if (!dom || !positionRules || !sim || !parser || !schedule) {
+    throw new Error('Junior Training Calculator wymaga vm-dom-utils.js, vm-position-rules.js, vm-junior-training-sim.js, vm-junior-training-parser.js i vm-matches-schedule.js.');
   }
 
   var PANEL_ID = 'vjtc-panel';
@@ -628,11 +631,43 @@
 
   function setSkillRows(panel, skills, form) {
     var skillsRoot = clearSkillRows(panel);
-    var items = skills && skills.length ? skills : [{ code: 'UM_PRZYJECIE', level: 10, targetLevel: sim.CONFIG.maxLevel }];
+    var items = Array.isArray(skills)
+      ? skills
+      : [{ code: 'UM_PRZYJECIE', level: 10, targetLevel: sim.CONFIG.maxLevel }];
     var refreshDisabled = form ? !getActivePlayer(panel, form) : true;
 
     items.forEach(function (skill) {
       skillsRoot.appendChild(createSkillRow(skill.code, skill.level, skill.targetLevel, refreshDisabled));
+    });
+  }
+
+  function updateSkillsHint(panel, skills) {
+    var hint = panel.querySelector('#vjtc-skills-hint');
+
+    if (!hint) {
+      return;
+    }
+
+    if (skills && skills.length) {
+      hint.textContent = '';
+      return;
+    }
+
+    if (panel.dataset.vjtcMode === 'scout') {
+      hint.textContent = 'Nie udało się ustalić rekomendowanych umiejętności — dodaj umiejętności ręcznie.';
+      return;
+    }
+
+    hint.textContent = SKILLS_HINT_EMPTY;
+  }
+
+  function getRecommendedSkillsForPlayer(player) {
+    if (!player) {
+      return [];
+    }
+
+    return positionRules.getRecommendedTrainableSkills(player.position, player.attributes, {
+      maxLevel: sim.CONFIG.maxLevel,
     });
   }
 
@@ -657,18 +692,27 @@
 
   function loadPlayerIntoPanel(panel, player, loadAllSkills, form) {
     var ageInput = panel.querySelector('#vjtc-age');
+    var skills;
 
     if (player && player.age != null && ageInput) {
       ageInput.value = String(player.age);
     }
 
-    if (!player || !loadAllSkills) {
-      panel.dataset.selectedPlayerId = player ? player.playerId : '';
+    panel.dataset.selectedPlayerId = player ? player.playerId : '';
+
+    if (!player) {
+      updateSkillsHint(panel, []);
       return;
     }
 
-    setSkillRows(panel, parser.getTrainableSkills(player.attributes), form);
-    panel.dataset.selectedPlayerId = player.playerId;
+    if (loadAllSkills) {
+      skills = parser.getTrainableSkills(player.attributes);
+    } else {
+      skills = getRecommendedSkillsForPlayer(player);
+    }
+
+    setSkillRows(panel, skills, form);
+    updateSkillsHint(panel, skills);
   }
 
   function refreshPlayerSelect(panel, form) {
@@ -718,7 +762,7 @@
       + '<div class="vjtc-player-row">'
       + '<label>Zawodnik<select id="vjtc-player">' + buildPlayerOptions(players, '') + '</select></label>'
       + '<div class="vjtc-player-actions">'
-      + '<button type="button" class="vjtc-btn" id="vjtc-load-player">Wczytaj umiejetnosci</button>'
+      + '<button type="button" class="vjtc-btn" id="vjtc-load-player">Wczytaj wszystkie</button>'
       + '<button type="button" class="vjtc-btn" id="vjtc-refresh-levels" disabled>Odswiez poziomy</button>'
       + '</div>'
       + '</div>'
@@ -730,7 +774,8 @@
       + '<span class="vjtc-field-hint" id="vjtc-pool-hint"></span></label>'
       + '<label>Dni sezonu<input id="vjtc-season-days" type="number" min="1" step="1" value="' + escapeHtml(sim.CONFIG.seasonDays) + '"></label>'
       + '</div>'
-      + '<p class="vjtc-hint">Kolejnosc umiejetnosci = priorytet strategii „Priorytet” (▲▼).</p>'
+      + '<p class="vjtc-hint">Kolejnosc umiejetnosci = priorytet strategii „Priorytet” (▲▼). Wybor zawodnika laduje rekomendowane umiejetnosci pozycji.</p>'
+      + '<p class="vjtc-hint" id="vjtc-skills-hint"></p>'
       + '<div class="vjtc-skills" id="vjtc-skills"></div>'
       + '<div class="vjtc-actions">'
       + '<button type="button" class="vjtc-btn" id="vjtc-add-skill">Dodaj umiejetnosc</button>'
@@ -945,7 +990,10 @@
       subtitle.textContent = buildScoutSubtitle(candidate);
     }
 
-    setSkillRows(panel, parser.getTrainableSkills(candidate.attributes), null);
+    var skills = getRecommendedSkillsForPlayer(candidate);
+
+    setSkillRows(panel, skills, null);
+    updateSkillsHint(panel, skills);
   }
 
   function findScoutPanelAnchor() {
@@ -986,7 +1034,8 @@
         + '<span class="vjtc-field-hint" id="vjtc-pool-hint"></span></label>'
         + '<label>Dni sezonu<input id="vjtc-season-days" type="number" min="1" step="1" value="' + escapeHtml(sim.CONFIG.seasonDays) + '"></label>'
         + '</div>'
-        + '<p class="vjtc-hint">Kolejnosc umiejetnosci = priorytet strategii „Priorytet” (▲▼).</p>'
+        + '<p class="vjtc-hint">Kolejnosc umiejetnosci = priorytet strategii „Priorytet” (▲▼). Kandydat laduje rekomendowane umiejetnosci pozycji.</p>'
+        + '<p class="vjtc-hint" id="vjtc-skills-hint"></p>'
         + '<div class="vjtc-skills" id="vjtc-skills"></div>'
         + '<div class="vjtc-actions">'
         + '<button type="button" class="vjtc-btn" id="vjtc-add-skill">Dodaj umiejetnosc</button>'

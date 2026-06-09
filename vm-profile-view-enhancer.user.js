@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         VM Profile View Enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.2.0
+// @version      0.2.1
 // @description  Enhances VM Manager player profile attributes with position-aware markers and summary.
 // @match        *://*.vm-manager.org/*
 // @match        *://vm-manager.org/*
 // @grant        none
 // @run-at       document-end
 // @require      https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-dom-utils.js
+// @require      https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-position-rules.js
 // @updateURL    https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-profile-view-enhancer.user.js
 // @downloadURL  https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-profile-view-enhancer.user.js
 // ==/UserScript==
@@ -16,9 +17,14 @@
   'use strict';
 
   var dom = window.VMDomUtils;
+  var positionRules = window.VMPositionRules;
 
   if (!dom) {
     throw new Error('VM Profile View Enhancer wymaga vm-dom-utils.js (@require).');
+  }
+
+  if (!positionRules) {
+    throw new Error('VM Profile View Enhancer wymaga vm-position-rules.js (@require).');
   }
 
   var MAX_ATTRIBUTE = 50.5;
@@ -50,29 +56,6 @@
   ];
 
   var SPECIAL_SCALE_ATTRIBUTES = makeSet(['Odporność na stres', 'Wytrzymałość']);
-
-  var POSITION_RULES = {
-    'Atakujący': {
-      primary: ['Ustawianie się do bloku', 'Blok', 'Asekuracja', 'Obrona'],
-      secondary: ['Serwis', 'Atak ze skrzydła', 'Kiwka', 'Atak z 2 linii', 'Omijanie bloku']
-    },
-    'Libero': {
-      primary: ['Przyjęcie', 'Obrona', 'Asekuracja'],
-      secondary: []
-    },
-    'Przyjmujący': {
-      primary: ['Przyjęcie', 'Obrona', 'Asekuracja', 'Ustawianie się do bloku', 'Blok'],
-      secondary: ['Serwis', 'Atak ze skrzydła', 'Kiwka', 'Atak z 2 linii', 'Omijanie bloku']
-    },
-    'Rozgrywający': {
-      primary: ['Rozgrywanie', 'Wystawa', 'Obrona', 'Asekuracja'],
-      secondary: ['Ustawianie się do bloku', 'Blok']
-    },
-    'Środkowy': {
-      primary: ['Atak ze środka', 'Omijanie bloku', 'Ustawianie się do bloku', 'Blok'],
-      secondary: ['Serwis', 'Kiwka']
-    }
-  };
 
   var ATTRIBUTE_SET = makeSet(ATTRIBUTE_NAMES);
   function makeSet(items) {
@@ -301,21 +284,7 @@
   }
 
   function getImportance(position, name) {
-    var rules = POSITION_RULES[position];
-
-    if (!rules) {
-      return 'none';
-    }
-
-    if (rules.primary.indexOf(name) !== -1) {
-      return 'primary';
-    }
-
-    if (rules.secondary.indexOf(name) !== -1) {
-      return 'secondary';
-    }
-
-    return 'none';
+    return positionRules.getImportance(position, name);
   }
 
   function resetEnhancements(container) {
