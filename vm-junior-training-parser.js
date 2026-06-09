@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VM Junior Training Parser
 // @namespace    https://vm-manager.org/
-// @version      1.1.1
+// @version      1.1.2
 // @description  Parses junior player data from VM Manager training view HTML/DOM.
 // @grant        none
 // @run-at       document-start
@@ -198,6 +198,45 @@
       .replace(/[\u0300-\u036f]/g, '')
       .replace(/\s+/g, ' ')
       .trim();
+  }
+
+  function htmlToText(html) {
+    return String(html || '')
+      .replace(/<br\s*\/?>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&euro;/gi, '€')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#039;/gi, "'")
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function getTableRowsFromHtml(html) {
+    var rows = [];
+    var rowRegex = /<TR\b[^>]*>([\s\S]*?)<\/TR>/gi;
+    var cellRegex = /<TD\b[^>]*>([\s\S]*?)<\/TD>/gi;
+    var rowMatch;
+    var cellMatch;
+    var cells;
+
+    while ((rowMatch = rowRegex.exec(String(html || ''))) !== null) {
+      cells = [];
+      cellRegex.lastIndex = 0;
+
+      while ((cellMatch = cellRegex.exec(rowMatch[1])) !== null) {
+        cells.push(htmlToText(cellMatch[1]));
+      }
+
+      if (cells.length >= 2) {
+        rows.push(cells);
+      }
+    }
+
+    return rows;
   }
 
   function unescapeVmString(value) {
@@ -411,18 +450,30 @@
 
   function parseScoutAttributesFromHtml(html) {
     var attributes = {};
-    var source = String(html || '');
-    var regex = /<TD[^>]*width=['"]?160['"]?[^>]*>([^<]+)<\/TD>\s*<TD[^>]*align=right[^>]*>([-\d.,]+)</gi;
-    var match;
+    var rows = getTableRowsFromHtml(html);
+    var i;
+    var cells;
+    var label;
+    var code;
+    var value;
 
-    while ((match = regex.exec(source)) !== null) {
-      var code = SCOUT_SKILL_LABEL_TO_CODE[normalizeSkillLabel(match[1])];
+    for (i = 0; i < rows.length; i += 1) {
+      cells = rows[i].filter(function (cell) {
+        return cell !== '';
+      });
+
+      if (cells.length < 2) {
+        continue;
+      }
+
+      label = cells[cells.length - 2];
+      code = SCOUT_SKILL_LABEL_TO_CODE[normalizeSkillLabel(label)];
 
       if (!code) {
         continue;
       }
 
-      var value = parseNumber(match[2]);
+      value = parseNumber(cells[cells.length - 1]);
 
       if (value !== null && !Number.isNaN(value)) {
         attributes[code] = value;
@@ -453,8 +504,21 @@
   }
 
   function parseScoutPositionFromHtml(html) {
-    var match = String(html || '').match(/<TD[^>]*>\s*Pozycja\s*<\/TD>\s*<TD[^>]*align=right[^>]*>([^<]+)</i);
-    return match ? match[1].replace(/\s+/g, ' ').trim() : '';
+    var rows = getTableRowsFromHtml(html);
+    var i;
+    var cells;
+
+    for (i = 0; i < rows.length; i += 1) {
+      cells = rows[i].filter(function (cell) {
+        return cell !== '';
+      });
+
+      if (cells.length >= 2 && normalizeSkillLabel(cells[cells.length - 2]) === 'pozycja') {
+        return cells[cells.length - 1];
+      }
+    }
+
+    return '';
   }
 
   function parseScoutCandidateFromHtml(html) {

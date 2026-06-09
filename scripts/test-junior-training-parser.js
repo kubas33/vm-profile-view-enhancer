@@ -6,6 +6,7 @@ var assert = require('assert');
 var fs = require('fs');
 var path = require('path');
 var parser = require('../vm-junior-training-parser.js');
+var positionRules = require('../vm-position-rules.js');
 var squadEnhancer = require('../vm-squad-view-enhancer.user.js');
 
 var root = path.resolve(__dirname, '..');
@@ -25,8 +26,25 @@ var trainable = parser.getTrainableSkills(rowAttributes);
 assert.ok(trainable.length > 0, 'expected trainable skills');
 assert.ok(trainable.every(function (skill) { return skill.level < 30.5; }), 'trainable skills should be below max');
 
-var scoutFixture = fs.readFileSync(path.join(root, 'raw_data', 'scout-panel.md'), 'utf8');
-var scoutHtml = parser.parseAjaxVmBody(scoutFixture);
+var scoutHtml = ''
+  + '<TABLE><TR><TD><b>Kiełtyka, Aleksander (AKS, 16 lat)</b></TD></TR>'
+  + '<TR><TD width="1"></TD><TD width="140">Serwis</TD>'
+  + '<TD width="70" align="right"><span class="link">12</span></TD></TR>'
+  + '<TR><TD width="1"></TD><TD width="140">Rozgrywanie</TD>'
+  + '<TD width="70" align="right"><span class="link" OnClick="callGetViewPanelBody_1(&quot;TrainingEffect&amp;playerId=1&quot;)">6</span></TD></TR>'
+  + '<TR><TD width="1"></TD><TD width="140">Atak ze środka</TD>'
+  + '<TD width="70" align="right">17</TD></TR>'
+  + '<TR><TD width="1"></TD><TD width="140">Kiwka</TD>'
+  + '<TD width="70" align="right">13</TD></TR>'
+  + '<TR><TD width="1"></TD><TD width="140">Omijanie bloku</TD>'
+  + '<TD width="70" align="right">18</TD></TR>'
+  + '<TR><TD width="1"></TD><TD width="140">Ustawianie się do bloku</TD>'
+  + '<TD width="70" align="right">18</TD></TR>'
+  + '<TR><TD width="1"></TD><TD width="140">Blok</TD>'
+  + '<TD width="70" align="right">15</TD></TR>'
+  + '<TR><TD>Pozycja</TD><TD align="right">Środkowy</TD></TR>'
+  + '<TR><TD>Odporność na stres</TD><TD align="right">10</TD></TR>'
+  + '<TR><TD><span onclick="YoungPlayerTempAccept()">Akceptuj</span></TD></TR></TABLE>';
 var scoutCandidate = parser.parseScoutCandidateFromHtml(scoutHtml);
 
 assert.ok(scoutCandidate, 'expected scout candidate from fixture');
@@ -36,6 +54,20 @@ assert.strictEqual(scoutCandidate.position, 'Środkowy', 'expected scout candida
 assert.strictEqual(scoutCandidate.attributes.UM_USTAWIANIE, 18, 'expected Ustawianie from scout fixture');
 assert.strictEqual(scoutCandidate.attributes.UM_ROZGRYWANIE, 6, 'expected Rozgrywanie from scout fixture');
 assert.strictEqual(scoutCandidate.attributes.UM_ODPORNOSC, undefined, 'non-trainable scout stats should be ignored');
+
+assert.deepStrictEqual(
+  positionRules.getRecommendedTrainableSkills(scoutCandidate.position, scoutCandidate.attributes)
+    .map(function (skill) { return skill.code; }),
+  [
+    'UM_ATAK_ZE_SRODKA',
+    'UM_OMIJANIE_BLOKU',
+    'UM_USTAWIANIE',
+    'UM_BLOK_AKTYWNY',
+    'UM_SERWIS',
+    'UM_KIWKA',
+  ],
+  'scout candidate should load primary then secondary skills'
+);
 
 var poolHtml = ''
   + "<FORM id='trening_options'>Punkty treningowe: 33/60</FORM>"
