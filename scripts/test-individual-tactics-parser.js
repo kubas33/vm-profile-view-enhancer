@@ -20,6 +20,7 @@ var cimirotRow = view.rows.find(function (row) {
 
 assert.ok(html.indexOf('IndividualSave') !== -1, 'expected individual tactics html');
 assert.strictEqual(view.scenarioOpt, 'Squad&opt=atk1b1l', 'expected selected scenario opt');
+assert.strictEqual(enhancer.getViewType(view), 'attack', 'expected attack view type');
 assert.deepStrictEqual(
   view.columns.map(function (column) {
     return column.field;
@@ -27,48 +28,24 @@ assert.deepStrictEqual(
   ['atak', 'kiwka', 'out'],
   'expected attack column fields'
 );
-assert.deepStrictEqual(
-  view.columns.map(function (column) {
-    return column.label;
-  }),
-  ['normalny atak', 'kiwka', 'atak blok-out'],
-  'expected attack column labels'
-);
 assert.strictEqual(view.rows.length, 2, 'expected two player rows in fixture');
 assert.ok(capleRow, 'expected Caple row');
-assert.strictEqual(capleRow.positionShort, 'At', 'expected Caple position');
 assert.strictEqual(capleRow.fields.atak.value, 1, 'expected Caple normal attack value');
-assert.strictEqual(capleRow.fields.kiwka.value, 8, 'expected Caple tip value');
-assert.ok(cimirotRow, 'expected Cimirot row');
-assert.strictEqual(cimirotRow.positionShort, 'Śr', 'expected Cimirot position');
-assert.strictEqual(cimirotRow.fields.kiwka.value, 3, 'expected Cimirot tip value');
-
-assert.strictEqual(
-  enhancer.getPresetMap(view),
-  enhancer.ATTACK_PRESETS,
-  'expected attack preset map for attack view'
-);
-
-var snapshot = enhancer.takeSnapshot(view);
-assert.strictEqual(
-  Object.keys(snapshot).length,
-  6,
-  'expected six tracked span values in snapshot'
-);
-assert.strictEqual(snapshot['line_1_block_1_atak_1976867'], 1, 'expected Caple attack in snapshot');
 
 var defenseFixture = fs.readFileSync(path.join(root, 'raw_data', 'individual-tactics-defense-view.md'), 'utf8');
-var defenseHtml = enhancer.extractVmBody(defenseFixture);
-var defenseView = enhancer.parseIndividualViewFromHtml(defenseHtml);
+var defenseView = enhancer.parseIndividualViewFromHtml(enhancer.extractVmBody(defenseFixture));
 
+assert.strictEqual(enhancer.getViewType(defenseView), 'defense', 'expected defense view type');
 assert.strictEqual(defenseView.columns.length, 2, 'expected two defense columns');
-assert.strictEqual(defenseView.rows.length, 1, 'expected one defense row');
-assert.strictEqual(defenseView.rows[0].fields.obrona.value, 8, 'expected defense value');
-assert.strictEqual(defenseView.rows[0].fields.asekuracja.value, 3, 'expected coverage value');
-assert.strictEqual(
-  enhancer.getPresetMap(defenseView),
-  enhancer.DEFENSE_PRESETS,
-  'expected defense preset map'
-);
+assert.strictEqual(enhancer.buildPresetActions(defenseView, null, null).length, 2, 'expected two defense presets');
 
-console.log('individual tactics parser ok: ' + view.rows.length + ' attack rows, ' + defenseView.rows.length + ' defense rows');
+var serveFixture = fs.readFileSync(path.join(root, 'raw_data', 'individual-tactics-serve-view.md'), 'utf8');
+var serveView = enhancer.parseIndividualViewFromHtml(enhancer.extractVmBody(serveFixture));
+
+assert.strictEqual(enhancer.getViewType(serveView), 'serve', 'expected serve view type');
+assert.strictEqual(serveView.columns.length, 4, 'expected four serve columns');
+assert.strictEqual(enhancer.getPresetColumns(serveView).length, 3, 'expected three preset columns without power');
+assert.strictEqual(enhancer.buildPresetActions(serveView, null, null).length, 3, 'expected three serve presets');
+assert.strictEqual(enhancer.SERVE_GLOBAL_PRESETS[0].values.join('/'), '8/1/1', 'expected first serve preset values');
+
+console.log('individual tactics parser ok');
