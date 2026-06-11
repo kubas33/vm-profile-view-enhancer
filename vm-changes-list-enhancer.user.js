@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VM Changes List Enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.1.7
+// @version      0.1.8
 // @description  Sorting and filtering for VM Manager tactic changes list view.
 // @match        *://*.vm-manager.org/*
 // @match        *://vm-manager.org/*
@@ -51,6 +51,7 @@
   var COUNTER_CLASS = 'vtcl-counter';
 
   var DEBUG_STORAGE_KEY = 'vtcl.debug';
+  var STATE_STORAGE_KEY = 'vtcl.listState.v1';
   var enhancing = false;
   var lastEnhanceKey = '';
   var activeListContext = null;
@@ -266,6 +267,129 @@
     activeSetCount: 'activeSetCount',
     activeSets: 'activeSets'
   };
+
+  function getStorage() {
+    if (!root || !root.localStorage) {
+      return null;
+    }
+
+    return root.localStorage;
+  }
+
+  function isValidSortKey(sortKey) {
+    return Object.keys(SORT_KEYS).some(function (key) {
+      return SORT_KEYS[key] === sortKey;
+    });
+  }
+
+  function isValidSortDirection(direction) {
+    return direction === 'asc' || direction === 'desc';
+  }
+
+  function normalizeSetFilters(values) {
+    var map = {};
+    var result = [];
+
+    if (!Array.isArray(values)) {
+      return ['all'];
+    }
+
+    values.forEach(function (value) {
+      var text = String(value);
+
+      if (text === 'all' || /^[1-5]$/.test(text)) {
+        map[text] = true;
+      }
+    });
+
+    if (map.all) {
+      return ['all'];
+    }
+
+    ['1', '2', '3', '4', '5'].forEach(function (value) {
+      if (map[value]) {
+        result.push(value);
+      }
+    });
+
+    return result.length ? result : ['all'];
+  }
+
+  function normalizeStoredState(state) {
+    var result = {
+      search: '',
+      playerId: '',
+      setFilters: ['all'],
+      sortKey: '',
+      sortDirection: ''
+    };
+
+    if (!state || typeof state !== 'object') {
+      return result;
+    }
+
+    result.search = typeof state.search === 'string' ? state.search : '';
+    result.playerId = typeof state.playerId === 'string' ? state.playerId : '';
+    result.setFilters = normalizeSetFilters(state.setFilters);
+
+    if (isValidSortKey(state.sortKey) && isValidSortDirection(state.sortDirection)) {
+      result.sortKey = state.sortKey;
+      result.sortDirection = state.sortDirection;
+    }
+
+    return result;
+  }
+
+  function readListState() {
+    var storage = getStorage();
+    var raw;
+
+    if (!storage) {
+      return normalizeStoredState(null);
+    }
+
+    try {
+      raw = storage.getItem(STATE_STORAGE_KEY);
+      return normalizeStoredState(raw ? JSON.parse(raw) : null);
+    } catch (error) {
+      return normalizeStoredState(null);
+    }
+  }
+
+  function writeListState(state) {
+    var storage = getStorage();
+
+    if (!storage) {
+      return;
+    }
+
+    try {
+      storage.setItem(STATE_STORAGE_KEY, JSON.stringify(normalizeStoredState(state)));
+    } catch (error) {
+      // ignore storage failures
+    }
+  }
+
+  function getCurrentListState(documentRef) {
+    var panel = getFilterPanel(documentRef);
+    var search = panel ? panel.querySelector('#' + dom.cssEscape(SEARCH_INPUT_ID)) : null;
+    var player = panel ? panel.querySelector('#' + dom.cssEscape(PLAYER_FILTER_ID)) : null;
+    var selectedSets = queryPanelControls(documentRef, '.' + SET_FILTER_CLASS + ':checked').map(function (input) {
+      return input.value;
+    });
+
+    return normalizeStoredState({
+      search: search ? search.value : '',
+      playerId: player ? player.value : '',
+      setFilters: selectedSets,
+      sortKey: documentRef.body.getAttribute(SORT_KEY_ATTR) || '',
+      sortDirection: documentRef.body.getAttribute(SORT_DIR_ATTR) || ''
+    });
+  }
+
+  function saveCurrentListState(documentRef) {
+    writeListState(getCurrentListState(documentRef));
+  }
 
   function isChangeAddView(documentRef) {
     var saveVisible = dom.queryVisibleAll(documentRef, 'span.link').some(function (el) {
@@ -845,14 +969,15 @@
     updateCounter(documentRef, visibleCount, parsedRows.length);
   }
 
-  function sortChangesBy(sortKey, documentRef) {
-    var listRoot = getCachedListRoot() || findChangesListRoot(documentRef);
+  function sortChanges(sortKey, direction, documentRef, listRoot, shouldSaveState) {
+    listRoot = listRoot || getCachedListRoot() || findChangesListRoot(documentRef);
     var rows = listRoot ? listRoot.dataRows : [];
-    var currentKey = documentRef.body.getAttribute(SORT_KEY_ATTR);
-    var currentDirection = documentRef.body.getAttribute(SORT_DIR_ATTR) || 'desc';
-    var nextDirection = currentKey === sortKey && currentDirection === 'desc' ? 'asc' : 'desc';
     var blocks;
     var parent;
+
+    if (!isValidSortKey(sortKey) || !isValidSortDirection(direction)) {
+      return false;
+    }
 
     blocks = rows.map(function (row, index) {
       var block = getChangeBlock(row);
@@ -875,7 +1000,7 @@
 
     parent = blocks[0].block.blockRow.parentNode;
     blocks.sort(function (left, right) {
-      return compareSortValues(left, right, nextDirection);
+      return compareSortValues(left, right, direction);
     });
 
     blocks.forEach(function (item) {
@@ -886,9 +1011,21 @@
     });
 
     documentRef.body.setAttribute(SORT_KEY_ATTR, sortKey);
-    documentRef.body.setAttribute(SORT_DIR_ATTR, nextDirection);
-    updateSortControls(documentRef, sortKey, nextDirection);
+    documentRef.body.setAttribute(SORT_DIR_ATTR, direction);
+    updateSortControls(documentRef, sortKey, direction);
+    if (shouldSaveState) {
+      saveCurrentListState(documentRef);
+    }
     applyFilters(documentRef);
+    return true;
+  }
+
+  function sortChangesBy(sortKey, documentRef) {
+    var currentKey = documentRef.body.getAttribute(SORT_KEY_ATTR);
+    var currentDirection = documentRef.body.getAttribute(SORT_DIR_ATTR) || 'desc';
+    var nextDirection = currentKey === sortKey && currentDirection === 'desc' ? 'asc' : 'desc';
+
+    sortChanges(sortKey, nextDirection, documentRef, null, true);
   }
 
   function ensureSortMarker(button) {
@@ -1012,6 +1149,7 @@
         }
       }
 
+      saveCurrentListState(documentRef);
       applyFilters(documentRef);
     });
 
@@ -1037,7 +1175,51 @@
       checkbox.checked = checkbox.value === 'all';
     });
 
+    saveCurrentListState(documentRef);
     applyFilters(documentRef);
+  }
+
+  function setPlayerFilterValue(select, value) {
+    var option;
+
+    if (!select || !value) {
+      return;
+    }
+
+    option = Array.prototype.slice.call(select.options).find(function (item) {
+      return item.value === value;
+    });
+
+    if (option) {
+      select.value = value;
+    }
+  }
+
+  function restoreFilterPanelState(documentRef, listRoot) {
+    var state = readListState();
+    var panel = getFilterPanel(documentRef);
+    var search = panel ? panel.querySelector('#' + dom.cssEscape(SEARCH_INPUT_ID)) : null;
+    var player = panel ? panel.querySelector('#' + dom.cssEscape(PLAYER_FILTER_ID)) : null;
+    var setFilters = panel ? panel.querySelectorAll('.' + SET_FILTER_CLASS) : [];
+    var selectedSets = normalizeSetFilters(state.setFilters);
+
+    if (search) {
+      search.value = state.search;
+    }
+
+    setPlayerFilterValue(player, state.playerId);
+
+    Array.prototype.forEach.call(setFilters, function (checkbox) {
+      checkbox.checked = selectedSets.indexOf(checkbox.value) !== -1;
+    });
+
+    if (state.sortKey && state.sortDirection) {
+      return sortChanges(state.sortKey, state.sortDirection, documentRef, listRoot, false);
+    }
+
+    updateSortControls(documentRef, '', '');
+    applyFilters(documentRef, listRoot);
+    return true;
   }
 
   function injectStyles(documentRef) {
@@ -1161,6 +1343,7 @@
     searchInput.type = 'search';
     searchInput.placeholder = 'Nazwisko zawodnika...';
     searchInput.addEventListener('input', function () {
+      saveCurrentListState(documentRef);
       applyFilters(documentRef);
     });
 
@@ -1169,6 +1352,7 @@
     playerSelect.id = PLAYER_FILTER_ID;
     playerSelect.className = 'vtcl-player-select';
     playerSelect.addEventListener('change', function () {
+      saveCurrentListState(documentRef);
       applyFilters(documentRef);
     });
     populatePlayerFilter(playerSelect, parsedRows);
@@ -1352,7 +1536,7 @@
       documentRef.body.setAttribute(SIGNATURE_ATTR, signature);
       lastEnhanceKey = enhanceKey;
       rememberListContext(listRoot, signature);
-      applyFilters(documentRef, listRoot);
+      restoreFilterPanelState(documentRef, listRoot);
       infoLog('panel filtrów aktywny', describeNode(listRoot.scope));
       debugLog('enhanceChangesList: ok', collectDebugStatus(documentRef));
     } finally {
@@ -1374,7 +1558,7 @@
       return;
     }
 
-    infoLog('VM Changes List Enhancer v0.1.7 — debug: localStorage.setItem("vtcl.debug","1")');
+    infoLog('VM Changes List Enhancer v0.1.8 — debug: localStorage.setItem("vtcl.debug","1")');
     debugLog('start');
 
     if (root) {
