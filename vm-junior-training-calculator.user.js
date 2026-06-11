@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Volleyball junior training calculator
 // @namespace    https://vm-manager.org/
-// @version      0.5.8
+// @version      0.5.9
 // @description  Projects junior academy skill growth with comparable allocation strategies.
 // @match        *://*.vm-manager.org/*
 // @match        *://vm-manager.org/*
@@ -598,6 +598,15 @@
     panel.dataset.vjtcControlsBound = '1';
 
     panel.addEventListener('change', function (event) {
+      if (event.target.id === 'vjtc-junior-count') {
+        panel.dataset.juniorCountManual = '1';
+        var juniorCountHint = panel.querySelector('#vjtc-junior-count-hint');
+        if (juniorCountHint) {
+          juniorCountHint.textContent = 'Ustawione recznie.';
+        }
+        return;
+      }
+
       if (!event.target.classList.contains('vjtc-skill-code')) {
         return;
       }
@@ -605,6 +614,12 @@
       var player = getActivePlayer(panel, form);
       if (row && player) {
         setRowLevelFromPlayer(row, player);
+      }
+    });
+
+    panel.addEventListener('input', function (event) {
+      if (event.target.id === 'vjtc-junior-count') {
+        panel.dataset.juniorCountManual = '1';
       }
     });
 
@@ -786,7 +801,7 @@
     var hint = panel.querySelector('#vjtc-junior-count-hint');
     var normalized = sim.normalizeJuniorCount(count);
 
-    if (!input || document.activeElement === input) {
+    if (!input || document.activeElement === input || panel.dataset.juniorCountManual === '1') {
       return;
     }
 
