@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VM Individual Tactics Enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.2.5
+// @version      0.2.6
 // @description  Bulk edit, player selection, attribute chips, position presets and dirty-state tracking for VM Manager individual tactics view.
 // @match        *://*.vm-manager.org/*
 // @match        *://vm-manager.org/*
@@ -53,6 +53,8 @@
   var PANEL_ID = 'viti-bulk-panel';
   var HOST_CLASS = 'viti-tactics-host';
   var ENHANCE_SUPPRESS_MS = 400;
+  var DEACTIVATE_DELAY_MS = 800;
+  var SPACER_ATTR = 'data-viti-spacer-applied';
   var SIGNATURE_ATTR = 'data-viti-signature';
   var ENHANCED_ATTR = 'data-viti-enhanced';
   var ROW_ENHANCED_ATTR = 'data-viti-row-enhanced';
@@ -137,7 +139,8 @@
     updateSelectionUi: null,
     updatePositionFilterUi: null,
     isEnhancing: false,
-    enhanceSuppressUntil: 0
+    enhanceSuppressUntil: 0,
+    deactivateTimer: null
   };
 
   function shouldSuppressEnhance() {
@@ -601,7 +604,7 @@
   }
 
   function isIndividualTacticsView(documentRef) {
-    var select = dom.getVisibleElementById(documentRef, 'cup_id');
+    var select = dom.getVisibleElementById(documentRef, 'cup_id') || documentRef.querySelector('#cup_id');
     var hasScenarioSelect = Boolean(
       select &&
       select.querySelector('option[value*="Squad&opt="]')
@@ -1646,7 +1649,7 @@
     return node;
   }
 
-  function tightenTacticsSpacing(documentRef) {
+  function ensureTacticsSpacerHidden(documentRef) {
     var blockRow = findTacticsBlockRow(documentRef);
     var prev;
 
@@ -1656,7 +1659,8 @@
 
     prev = blockRow.previousElementSibling;
 
-    if (prev && prev.tagName === 'TR') {
+    if (prev && prev.tagName === 'TR' && !prev.hasAttribute(SPACER_ATTR)) {
+      prev.setAttribute(SPACER_ATTR, '1');
       prev.classList.add('viti-tactics-spacer');
     }
   }
@@ -1666,6 +1670,10 @@
     var table = headerTable || findTacticsHeaderTable(documentRef);
 
     if (!table) {
+      return;
+    }
+
+    if (table.classList.contains('viti-tactics-header-table')) {
       return;
     }
 
@@ -1693,8 +1701,9 @@
       row.classList.remove('viti-header-row', 'viti-header-decor-row');
     });
 
-    documentRef.querySelectorAll('.viti-tactics-spacer').forEach(function (row) {
+    documentRef.querySelectorAll('[' + SPACER_ATTR + '="1"]').forEach(function (row) {
       row.classList.remove('viti-tactics-spacer');
+      row.removeAttribute(SPACER_ATTR);
     });
   }
 
@@ -1946,7 +1955,7 @@
       panel.classList.add('viti-panel-attached');
       host.insertBefore(panel, headerTable);
       stylePanelHeaderIntegration(documentRef, headerTable);
-      tightenTacticsSpacing(documentRef);
+      ensureTacticsSpacerHidden(documentRef);
       return;
     }
 
@@ -2154,16 +2163,43 @@
     var playerIds = view.rows.map(function (row) {
       return row.playerId;
     });
+    var columnFields = view.columns.map(function (column) {
+      return column.field;
+    });
 
     playerIds.sort();
+    columnFields.sort();
 
     return [
       view.scenarioOpt,
-      view.columns.map(function (column) {
-        return column.field;
-      }).join(','),
+      columnFields.join(','),
       playerIds.join(',')
     ].join('|');
+  }
+
+  function cancelDeactivateTimer() {
+    if (state.deactivateTimer) {
+      clearTimeout(state.deactivateTimer);
+      state.deactivateTimer = null;
+    }
+  }
+
+  function teardownPanelAndRows(documentRef) {
+    var panel = documentRef.getElementById(PANEL_ID);
+
+    if (panel) {
+      panel.remove();
+    }
+
+    dom.queryVisibleAll(documentRef, '.viti-save-dirty').forEach(function (node) {
+      node.classList.remove('viti-save-dirty');
+    });
+
+    cleanupRowEnhancements(documentRef);
+
+    state.updateSelectionUi = null;
+    state.updatePositionFilterUi = null;
+    state.scenarioSelect = null;
   }
 
   function cleanupIndividualEnhancements(documentRef) {
@@ -2193,6 +2229,18 @@
     state.updatePositionFilterUi = null;
     state.isEnhancing = false;
     state.enhanceSuppressUntil = 0;
+    cancelDeactivateTimer();
+  }
+
+  function scheduleDeactivateCleanup(documentRef) {
+    cancelDeactivateTimer();
+    state.deactivateTimer = setTimeout(function () {
+      state.deactivateTimer = null;
+
+      if (!isIndividualTacticsView(documentRef)) {
+        cleanupIndividualEnhancements(documentRef);
+      }
+    }, DEACTIVATE_DELAY_MS);
   }
 
   function enhanceIndividualTactics(documentRef) {
@@ -2211,12 +2259,16 @@
       existingPanel = documentRef.getElementById(PANEL_ID);
 
       if (!isIndividualTacticsView(documentRef)) {
-        if (!existingPanel) {
+        if (existingPanel) {
+          scheduleDeactivateCleanup(documentRef);
+        } else {
           cleanupIndividualEnhancements(documentRef);
         }
 
         return;
       }
+
+      cancelDeactivateTimer();
 
       view = parseIndividualView(documentRef);
 
@@ -2229,13 +2281,12 @@
 
       if (existingPanel && existingPanel.getAttribute(SIGNATURE_ATTR) === signature) {
         ensureStyles(documentRef);
-        stylePanelHeaderIntegration(documentRef, findTacticsHeaderTable(documentRef));
-        tightenTacticsSpacing(documentRef);
         updateDirtyUi(documentRef, existingPanel.querySelector('.viti-status'));
         return;
       }
 
-      cleanupIndividualEnhancements(documentRef);
+      teardownPanelAndRows(documentRef);
+      state.snapshot = null;
       ensureStyles(documentRef);
       initPositionVisibility(view);
 
@@ -2269,7 +2320,7 @@
       document: root.document,
       isActive: isIndividualTacticsView,
       onEnhance: enhanceIndividualTactics,
-      onDeactivate: cleanupIndividualEnhancements,
+      onDeactivate: scheduleDeactivateCleanup,
       delayMs: 120
     }).start();
   }
