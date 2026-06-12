@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VM Individual Tactics Enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.3.0
+// @version      0.3.1
 // @description  Bulk edit, player selection, attribute chips, position presets and dirty-state tracking for VM Manager individual tactics view.
 // @match        *://*.vm-manager.org/*
 // @match        *://vm-manager.org/*
@@ -53,6 +53,8 @@
   var PANEL_ID = 'viti-bulk-panel';
   var SCENARIO_ANCHOR_ID = 'viti-scenario-anchor';
   var NATIVE_SCENARIO_HIDDEN_CLASS = 'viti-native-scenario-hidden';
+  var SCENARIO_TABLE_ATTR = 'data-viti-scenario-table';
+  var SCENARIO_ROW_ATTR = 'data-viti-scenario-row';
   var HOST_CLASS = 'viti-tactics-host';
   var ENHANCE_SUPPRESS_MS = 400;
   var DEACTIVATE_DELAY_MS = 800;
@@ -1990,25 +1992,58 @@
     return anchor;
   }
 
-  function findNativeScenarioHost(select) {
+  function findNativeScenarioTable(documentRef, select) {
+    var marked = documentRef.querySelector('table[' + SCENARIO_TABLE_ATTR + '="1"]');
+
+    if (marked) {
+      return marked;
+    }
+
     if (!select) {
       return null;
     }
 
-    return select.closest('td[align="right"]');
+    var table = select.closest('table');
+
+    while (table) {
+      if (table.querySelector('td.second_top_left, td.second_top_bottom, td.second_bottom_left')) {
+        return table;
+      }
+
+      table = table.parentElement ? table.parentElement.closest('table') : null;
+    }
+
+    return null;
   }
 
-  function hideNativeScenarioHost(select) {
-    var host = findNativeScenarioHost(select);
+  function hideNativeScenarioTable(documentRef, select) {
+    var table = findNativeScenarioTable(documentRef, select);
+    var row;
 
-    if (host) {
-      host.classList.add(NATIVE_SCENARIO_HIDDEN_CLASS);
+    if (!table) {
+      return;
+    }
+
+    table.setAttribute(SCENARIO_TABLE_ATTR, '1');
+    table.classList.add(NATIVE_SCENARIO_HIDDEN_CLASS);
+
+    row = table.parentElement;
+
+    while (row && row.tagName !== 'TR') {
+      row = row.parentElement;
+    }
+
+    if (row) {
+      row.setAttribute(SCENARIO_ROW_ATTR, '1');
+      row.classList.add(NATIVE_SCENARIO_HIDDEN_CLASS);
     }
   }
 
-  function showNativeScenarioHost(documentRef) {
-    documentRef.querySelectorAll('.' + NATIVE_SCENARIO_HIDDEN_CLASS).forEach(function (node) {
+  function showNativeScenarioTable(documentRef) {
+    documentRef.querySelectorAll('table[' + SCENARIO_TABLE_ATTR + '="1"], tr[' + SCENARIO_ROW_ATTR + '="1"]').forEach(function (node) {
       node.classList.remove(NATIVE_SCENARIO_HIDDEN_CLASS);
+      node.removeAttribute(SCENARIO_TABLE_ATTR);
+      node.removeAttribute(SCENARIO_ROW_ATTR);
     });
   }
 
@@ -2019,7 +2054,7 @@
       return null;
     }
 
-    hideNativeScenarioHost(select);
+    hideNativeScenarioTable(documentRef, select);
     slotNode.appendChild(select);
     select.classList.add('viti-scenario-select');
 
@@ -2049,6 +2084,7 @@
     }
 
     mountScenarioSelectInPanel(documentRef, slot);
+    hideNativeScenarioTable(documentRef, select);
   }
 
   function hookScenarioSelect(documentRef, statusNode) {
@@ -2373,7 +2409,7 @@
     var panel = documentRef.getElementById(PANEL_ID);
 
     unmountScenarioSelectFromPanel(documentRef);
-    showNativeScenarioHost(documentRef);
+    showNativeScenarioTable(documentRef);
 
     if (panel) {
       panel.remove();
@@ -2440,6 +2476,7 @@
 
       cancelDeactivateTimer();
       repairWronglyHiddenSpacerRows(documentRef);
+      hideNativeScenarioTable(documentRef, documentRef.querySelector('#cup_id'));
 
       view = parseIndividualView(documentRef);
 
