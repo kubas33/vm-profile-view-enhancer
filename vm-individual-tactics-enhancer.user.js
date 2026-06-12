@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         VM Individual Tactics Enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.1.3
-// @description  Bulk edit, position presets and dirty-state tracking for VM Manager individual tactics view.
+// @version      0.2.0
+// @description  Bulk edit, player selection, attribute chips, position presets and dirty-state tracking for VM Manager individual tactics view.
 // @match        *://*.vm-manager.org/*
 // @match        *://vm-manager.org/*
 // @grant        none
 // @run-at       document-end
 // @require      https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-dom-utils.js
+// @require      https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-position-rules.js
 // @updateURL    https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-individual-tactics-enhancer.user.js
 // @downloadURL  https://github.com/kubas33/vm-enhanced-pack/raw/refs/heads/main/vm-individual-tactics-enhancer.user.js
 // ==/UserScript==
@@ -32,16 +33,94 @@
       return null;
     }
   })();
+  var positionRules = (root && root.VMPositionRules) || (function () {
+    try {
+      return require('./vm-position-rules.js');
+    } catch (error) {
+      return null;
+    }
+  })();
 
   if (!dom) {
     throw new Error('VM Individual Tactics Enhancer wymaga vm-dom-utils.js (@require).');
+  }
+
+  if (!positionRules) {
+    throw new Error('VM Individual Tactics Enhancer wymaga vm-position-rules.js (@require).');
   }
 
   var STYLE_ID = 'viti-style';
   var PANEL_ID = 'viti-bulk-panel';
   var SIGNATURE_ATTR = 'data-viti-signature';
   var ENHANCED_ATTR = 'data-viti-enhanced';
+  var ROW_ENHANCED_ATTR = 'data-viti-row-enhanced';
   var HOLD_INTERVAL_MS = 80;
+  var TRAINING_URL = '/Ajax_handler.php?phpsite=view_body.php&action=Training';
+  var TRAINING_CACHE_KEY = 'vms.trainingPlayerData.v2';
+  var TRAINING_CACHE_TTL_MS = 5 * 60 * 1000;
+
+  var ATTRIBUTE_CODES = positionRules.ATTRIBUTE_CODES;
+
+  var TACTICS_ATTR_CHIPS = {
+    attack: {
+      At: [
+        { label: 'Atak ze skrzydła', short: 'Skr' },
+        { label: 'Atak z 2 linii', short: '2L' },
+        { label: 'Omijanie bloku', short: 'Om' },
+        { label: 'Kiwka', short: 'Kiw' }
+      ],
+      P: [
+        { label: 'Atak ze skrzydła', short: 'Skr' },
+        { label: 'Atak z 2 linii', short: '2L' },
+        { label: 'Omijanie bloku', short: 'Om' },
+        { label: 'Kiwka', short: 'Kiw' }
+      ],
+      Śr: [
+        { label: 'Atak ze środka', short: 'Śrd' },
+        { label: 'Omijanie bloku', short: 'Om' },
+        { label: 'Kiwka', short: 'Kiw' }
+      ],
+      Sr: [
+        { label: 'Atak ze środka', short: 'Śrd' },
+        { label: 'Omijanie bloku', short: 'Om' },
+        { label: 'Kiwka', short: 'Kiw' }
+      ],
+      R: [
+        { label: 'Atak ze skrzydła', short: 'Skr' },
+        { label: 'Atak z 2 linii', short: '2L' },
+        { label: 'Kiwka', short: 'Kiw' }
+      ],
+      L: [
+        { label: 'Atak ze skrzydła', short: 'Skr' },
+        { label: 'Atak z 2 linii', short: '2L' },
+        { label: 'Kiwka', short: 'Kiw' }
+      ]
+    },
+    defense: {
+      default: [
+        { label: 'Obrona', short: 'Obr' },
+        { label: 'Asekuracja', short: 'Asek' }
+      ]
+    },
+    serve: {
+      default: [
+        { label: 'Serwis', short: 'Ser' },
+        { label: 'Siła serwisu', short: 'Siła' }
+      ]
+    },
+    setting: {
+      default: [
+        { label: 'Rozgrywanie', short: 'Roz' },
+        { label: 'Wystawa', short: 'Wys' }
+      ]
+    }
+  };
+
+  var trainingPromise = null;
+  var trainingState = {
+    status: 'idle',
+    values: null
+  };
 
   var PRESET_HINTS = {
     attack: 'At/P: 8/1/1 · Śr: 8/3/1 · R/L: 1/1/1',
@@ -82,9 +161,11 @@
   var state = {
     snapshot: null,
     activePositionFilter: '',
+    selectedPlayerIds: {},
     scenarioSelect: null,
     scenarioPreviousIndex: 0,
-    holdTimer: null
+    holdTimer: null,
+    updateSelectionUi: null
   };
 
   function normalizeText(value) {
@@ -574,7 +655,8 @@
     }
 
     Object.keys(snapshot).forEach(function (spanId) {
-      var span = dom.getVisibleElementById(documentRef, spanId);
+      var nodes = dom.getElementsById(documentRef, spanId);
+      var span = nodes.length ? nodes[0] : null;
 
       if (span && readSpanValue(span) !== snapshot[spanId]) {
         count += 1;
@@ -588,8 +670,20 @@
     return countDirtyChanges(documentRef, state.snapshot) > 0;
   }
 
-  function setSpanValue(documentRef, spanId, targetValue, bounds) {
+  function getSpanById(documentRef, spanId) {
     var span = dom.getVisibleElementById(documentRef, spanId);
+    var nodes;
+
+    if (span) {
+      return span;
+    }
+
+    nodes = dom.getElementsById(documentRef, spanId);
+    return nodes.length ? nodes[0] : null;
+  }
+
+  function setSpanValue(documentRef, spanId, targetValue, bounds) {
+    var span = getSpanById(documentRef, spanId);
     var min = bounds.min;
     var max = bounds.max;
     var current;
@@ -630,6 +724,352 @@
     return view.rows.filter(function (row) {
       return row.positionShort === positionFilter ||
         (positionFilter === 'Śr' && row.positionShort === 'Sr');
+    });
+  }
+
+  function getSelectedRows(view) {
+    return view.rows.filter(function (row) {
+      return Boolean(state.selectedPlayerIds[row.playerId]);
+    });
+  }
+
+  function getBulkTargetRows(view) {
+    var selected = getSelectedRows(view);
+
+    if (selected.length) {
+      return selected;
+    }
+
+    return getFilteredRows(view, state.activePositionFilter);
+  }
+
+  function countSelectedPlayers() {
+    return Object.keys(state.selectedPlayerIds).length;
+  }
+
+  function setPlayerSelected(playerId, selected) {
+    if (!playerId) {
+      return;
+    }
+
+    if (selected) {
+      state.selectedPlayerIds[playerId] = true;
+    } else {
+      delete state.selectedPlayerIds[playerId];
+    }
+
+    if (state.updateSelectionUi) {
+      state.updateSelectionUi();
+    }
+  }
+
+  function clearPlayerSelection(documentRef) {
+    state.selectedPlayerIds = {};
+    syncCheckboxUi(documentRef);
+
+    if (state.updateSelectionUi) {
+      state.updateSelectionUi();
+    }
+  }
+
+  function selectVisiblePlayers(documentRef, view) {
+    view.rows.forEach(function (row) {
+      if (!row.container || row.container.style.display === 'none') {
+        return;
+      }
+
+      setPlayerSelected(row.playerId, true);
+    });
+
+    syncCheckboxUi(documentRef);
+  }
+
+  function syncCheckboxUi(documentRef) {
+    dom.queryVisibleAll(documentRef, '.viti-player-checkbox').forEach(function (checkbox) {
+      var playerId = checkbox.getAttribute('data-viti-player-id');
+      checkbox.checked = Boolean(state.selectedPlayerIds[playerId]);
+    });
+  }
+
+  function parseAttributeValue(value) {
+    var match = normalizeText(value).replace(',', '.').match(/-?\d+(?:\.\d+)?/);
+
+    return match ? Number(match[0]) : null;
+  }
+
+  function parseTrainingPlayerDataFromHtml(html) {
+    var result = {};
+    var source = String(html || '');
+    var rowRegex = /<tr><td class=(["'])second_left_right\1><\/td>[\s\S]*?Player&playerId=(\d+)[\s\S]*?<\/tr><tr><td class=(["'])second_bottom_left\3>/g;
+    var rowMatch;
+
+    while ((rowMatch = rowRegex.exec(source)) !== null) {
+      var rowHtml = rowMatch[0];
+      var playerId = rowMatch[2];
+      var attrRegex = /span_player_value_(UM_[A-Z0-9_]+)[^>]*>[\s\S]*?<font class=['"]?link['"]?>\(([-\d.,]+)\)/g;
+      var attrMatch;
+      var attributes = {};
+
+      while ((attrMatch = attrRegex.exec(rowHtml)) !== null) {
+        var name = ATTRIBUTE_CODES[attrMatch[1]];
+        var value = parseAttributeValue(attrMatch[2]);
+
+        if (name && value !== null && !Number.isNaN(value)) {
+          attributes[name] = value;
+        }
+      }
+
+      result[playerId] = { attributes: attributes };
+    }
+
+    return result;
+  }
+
+  function readTrainingCache(storage) {
+    var raw;
+    var parsed;
+
+    if (!storage) {
+      return null;
+    }
+
+    try {
+      raw = storage.getItem(TRAINING_CACHE_KEY);
+      parsed = raw ? JSON.parse(raw) : null;
+    } catch (error) {
+      return null;
+    }
+
+    if (!parsed || !parsed.createdAt || !parsed.values) {
+      return null;
+    }
+
+    if (Date.now() - parsed.createdAt > TRAINING_CACHE_TTL_MS) {
+      return null;
+    }
+
+    return parsed.values;
+  }
+
+  function writeTrainingCache(storage, values) {
+    if (!storage) {
+      return;
+    }
+
+    try {
+      storage.setItem(TRAINING_CACHE_KEY, JSON.stringify({
+        createdAt: Date.now(),
+        values: values
+      }));
+    } catch (error) {
+      // Cache failures should not block the tactics view.
+    }
+  }
+
+  function fetchTrainingPlayerData() {
+    var cached;
+
+    if (trainingState.status === 'loaded') {
+      return Promise.resolve(trainingState.values);
+    }
+
+    if (trainingPromise) {
+      return trainingPromise;
+    }
+
+    cached = readTrainingCache(root.sessionStorage);
+    if (cached) {
+      trainingState.status = 'loaded';
+      trainingState.values = cached;
+      return Promise.resolve(cached);
+    }
+
+    if (!root || !root.fetch) {
+      return Promise.resolve(null);
+    }
+
+    trainingState.status = 'loading';
+    trainingPromise = root.fetch(TRAINING_URL, {
+      credentials: 'same-origin'
+    }).then(function (response) {
+      if (!response.ok) {
+        throw new Error('Training fetch failed with status ' + response.status);
+      }
+
+      return response.text();
+    }).then(function (text) {
+      var values = parseTrainingPlayerDataFromHtml(extractVmBody(text));
+
+      trainingState.status = 'loaded';
+      trainingState.values = values;
+      writeTrainingCache(root.sessionStorage, values);
+
+      return values;
+    }).catch(function () {
+      trainingState.status = 'error';
+      trainingState.values = null;
+      return null;
+    }).finally(function () {
+      trainingPromise = null;
+    });
+
+    return trainingPromise;
+  }
+
+  function getGradeClass(value) {
+    if (value <= 9.9) {
+      return 'viti-grade-very-weak';
+    }
+
+    if (value <= 20.5) {
+      return 'viti-grade-weak';
+    }
+
+    if (value <= 30.5) {
+      return 'viti-grade-solid';
+    }
+
+    if (value <= 40.5) {
+      return 'viti-grade-good';
+    }
+
+    if (value <= 47.5) {
+      return 'viti-grade-very-good';
+    }
+
+    return 'viti-grade-elite';
+  }
+
+  function getAttrChipsForRow(view, row) {
+    var viewType = getViewType(view);
+    var typeMap = TACTICS_ATTR_CHIPS[viewType];
+
+    if (!typeMap) {
+      return [];
+    }
+
+    return typeMap[row.positionShort] || typeMap.default || [];
+  }
+
+  function findSaveLink(documentRef) {
+    return dom.queryVisibleAll(documentRef, 'span.link').find(function (link) {
+      return getOnClick(link).indexOf('IndividualSave') !== -1;
+    }) || null;
+  }
+
+  function findPlayerNameCell(container) {
+    var link = container.querySelector('span.link[onclick*="Player&playerId="], span.link[OnClick*="Player&playerId="]');
+
+    return link ? link.closest('td') : null;
+  }
+
+  function renderAttributeChips(documentRef, chipsHost, chipDefs, attributes) {
+    chipsHost.textContent = '';
+
+    chipDefs.forEach(function (chipDef) {
+      var value = attributes ? attributes[chipDef.label] : null;
+      var chip = documentRef.createElement('span');
+      var gradeClass;
+
+      chip.className = 'viti-attr-chip';
+
+      if (value === null || value === undefined || Number.isNaN(value)) {
+        chip.textContent = chipDef.short + ' —';
+        chip.className += ' viti-attr-chip-missing';
+        chip.title = chipDef.label + ': brak danych';
+      } else {
+        gradeClass = getGradeClass(value);
+        chip.textContent = chipDef.short + ' ' + Math.round(value);
+        chip.className += ' ' + gradeClass;
+        chip.title = chipDef.label + ': ' + value;
+      }
+
+      chipsHost.appendChild(chip);
+    });
+  }
+
+  function applyTrainingAttributesToView(documentRef, view, trainingData) {
+    if (!trainingData) {
+      return;
+    }
+
+    view.rows.forEach(function (row) {
+      var chipsHost = row.container ? row.container.querySelector('.viti-attr-chips') : null;
+      var playerData = trainingData[row.playerId];
+      var chipDefs;
+
+      if (!chipsHost) {
+        return;
+      }
+
+      chipDefs = getAttrChipsForRow(view, row);
+      renderAttributeChips(
+        documentRef,
+        chipsHost,
+        chipDefs,
+        playerData ? playerData.attributes : null
+      );
+    });
+  }
+
+  function cleanupRowEnhancements(documentRef) {
+    documentRef.querySelectorAll('.viti-attr-chips').forEach(function (node) {
+      node.remove();
+    });
+
+    documentRef.querySelectorAll('.viti-player-select').forEach(function (node) {
+      node.remove();
+    });
+
+    documentRef.querySelectorAll('[' + ROW_ENHANCED_ATTR + '="1"]').forEach(function (node) {
+      node.removeAttribute(ROW_ENHANCED_ATTR);
+    });
+  }
+
+  function attachRowEnhancements(documentRef, view) {
+    view.rows.forEach(function (row) {
+      var nameCell;
+      var selectLabel;
+      var checkbox;
+      var chipsHost;
+      var chipDefs;
+
+      if (!row.container || row.container.getAttribute(ROW_ENHANCED_ATTR) === '1') {
+        return;
+      }
+
+      nameCell = findPlayerNameCell(row.container);
+
+      if (!nameCell) {
+        return;
+      }
+
+      row.container.setAttribute(ROW_ENHANCED_ATTR, '1');
+
+      selectLabel = documentRef.createElement('label');
+      selectLabel.className = 'viti-player-select';
+      selectLabel.title = 'Zaznacz zawodnika do edycji grupowej';
+
+      checkbox = documentRef.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = 'viti-player-checkbox';
+      checkbox.setAttribute('data-viti-player-id', row.playerId);
+      checkbox.checked = Boolean(state.selectedPlayerIds[row.playerId]);
+      checkbox.addEventListener('change', function () {
+        setPlayerSelected(row.playerId, checkbox.checked);
+      });
+
+      selectLabel.appendChild(checkbox);
+      nameCell.insertBefore(selectLabel, nameCell.firstChild);
+
+      chipDefs = getAttrChipsForRow(view, row);
+
+      if (chipDefs.length) {
+        chipsHost = documentRef.createElement('div');
+        chipsHost.className = 'viti-attr-chips';
+        renderAttributeChips(documentRef, chipsHost, chipDefs, null);
+        nameCell.appendChild(chipsHost);
+      }
     });
   }
 
@@ -954,16 +1394,64 @@
       '  color: #7f93a8;',
       '  font-size: 11px;',
       '  flex-basis: 100%;',
-      '}'
+      '}',
+      '#' + PANEL_ID + ' .viti-selection-count {',
+      '  color: #9eb4c8;',
+      '  min-width: 110px;',
+      '}',
+      '#' + PANEL_ID + ' .viti-bulk-hint {',
+      '  color: #7f93a8;',
+      '  font-size: 11px;',
+      '}',
+      '#' + PANEL_ID + ' .viti-save-btn {',
+      '  margin-left: auto;',
+      '}',
+      '#' + PANEL_ID + ' .viti-save-btn.viti-save-dirty {',
+      '  border-color: #ffb347;',
+      '  color: #ffb347;',
+      '}',
+      '.viti-player-select {',
+      '  display: inline-flex;',
+      '  align-items: center;',
+      '  margin-right: 6px;',
+      '  vertical-align: middle;',
+      '}',
+      '.viti-player-checkbox {',
+      '  margin: 0;',
+      '  cursor: pointer;',
+      '}',
+      '.viti-attr-chips {',
+      '  display: flex;',
+      '  flex-wrap: wrap;',
+      '  gap: 4px;',
+      '  margin-top: 3px;',
+      '}',
+      '.viti-attr-chip {',
+      '  display: inline-block;',
+      '  padding: 0 4px;',
+      '  border-radius: 2px;',
+      '  font: 10px/1.5 Tahoma, Verdana, sans-serif;',
+      '  background: #243444;',
+      '  color: #c5d4e0;',
+      '  white-space: nowrap;',
+      '}',
+      '.viti-attr-chip-missing {',
+      '  color: #7f93a8;',
+      '}',
+      '.viti-grade-very-weak { color: #8f9ba3 !important; }',
+      '.viti-grade-weak { color: #d98b61 !important; }',
+      '.viti-grade-solid { color: #ffd45c !important; }',
+      '.viti-grade-good { color: #73d87a !important; }',
+      '.viti-grade-very-good { color: #4bd6d6 !important; }',
+      '.viti-grade-elite { color: #ff76d6 !important; }'
     ].join('\n');
     documentRef.head.appendChild(style);
   }
 
   function updateDirtyUi(documentRef, statusNode) {
     var dirtyCount = countDirtyChanges(documentRef, state.snapshot);
-    var saveLink = dom.queryVisibleAll(documentRef, 'span.link').find(function (link) {
-      return getOnClick(link).indexOf('IndividualSave') !== -1;
-    });
+    var saveLink = findSaveLink(documentRef);
+    var panelSaveButton = documentRef.querySelector('#' + PANEL_ID + ' .viti-save-btn');
 
     if (statusNode) {
       if (dirtyCount) {
@@ -980,6 +1468,14 @@
         saveLink.classList.add('viti-save-dirty');
       } else {
         saveLink.classList.remove('viti-save-dirty');
+      }
+    }
+
+    if (panelSaveButton) {
+      if (dirtyCount) {
+        panelSaveButton.classList.add('viti-save-dirty');
+      } else {
+        panelSaveButton.classList.remove('viti-save-dirty');
       }
     }
   }
@@ -1169,6 +1665,7 @@
   function buildPanel(documentRef, view) {
     var panel = documentRef.createElement('div');
     var filterRow = documentRef.createElement('div');
+    var selectionRow = documentRef.createElement('div');
     var bulkRow = documentRef.createElement('div');
     var presetRow = documentRef.createElement('div');
     var statusRow = documentRef.createElement('div');
@@ -1176,7 +1673,25 @@
     var columnSelect = documentRef.createElement('select');
     var valueInput = documentRef.createElement('input');
     var statusNode = documentRef.createElement('span');
+    var selectionCountNode = documentRef.createElement('span');
+    var bulkHintNode = documentRef.createElement('span');
+    var saveButton = documentRef.createElement('button');
     var i;
+
+    function refreshBulkHint() {
+      var selectedCount = countSelectedPlayers();
+
+      if (selectedCount) {
+        bulkHintNode.textContent = 'Zastosuj trafi do ' + selectedCount + ' zaznaczonych zawodników.';
+      } else {
+        bulkHintNode.textContent = 'Bez zaznaczenia: stosuj do filtra pozycji.';
+      }
+    }
+
+    function refreshSelectionUi() {
+      selectionCountNode.textContent = 'Zaznaczeni: ' + countSelectedPlayers();
+      refreshBulkHint();
+    }
 
     panel.id = PANEL_ID;
 
@@ -1206,6 +1721,24 @@
     positionSelect.id = 'viti-position-filter';
     filterRow.appendChild(positionSelect);
 
+    selectionRow.className = 'viti-row';
+    selectionCountNode.className = 'viti-selection-count';
+    selectionRow.appendChild(selectionCountNode);
+
+    ['Zaznacz widocznych', 'Odznacz wszystkich'].forEach(function (label) {
+      var button = documentRef.createElement('button');
+      button.type = 'button';
+      button.textContent = label;
+      button.addEventListener('click', function () {
+        if (label === 'Zaznacz widocznych') {
+          selectVisiblePlayers(documentRef, view);
+        } else {
+          clearPlayerSelection(documentRef);
+        }
+      });
+      selectionRow.appendChild(button);
+    });
+
     bulkRow.className = 'viti-row';
     bulkRow.appendChild(documentRef.createElement('label')).textContent = 'Kolumna:';
     bulkRow.appendChild(columnSelect);
@@ -1218,7 +1751,7 @@
       button.addEventListener('click', function () {
         applyFieldValue(
           documentRef,
-          getFilteredRows(view, state.activePositionFilter),
+          getBulkTargetRows(view),
           columnSelect.value,
           presetValue
         );
@@ -1235,13 +1768,16 @@
     applyButton.addEventListener('click', function () {
       applyFieldValue(
         documentRef,
-        getFilteredRows(view, state.activePositionFilter),
+        getBulkTargetRows(view),
         columnSelect.value,
         valueInput.value
       );
       updateDirtyUi(documentRef, statusNode);
     });
     bulkRow.appendChild(applyButton);
+
+    bulkHintNode.className = 'viti-bulk-hint';
+    bulkRow.appendChild(bulkHintNode);
 
     presetRow.className = 'viti-row';
     presetRow.appendChild(documentRef.createElement('label')).textContent = 'Presety:';
@@ -1274,10 +1810,12 @@
 
     if (presetActions.length) {
       panel.appendChild(filterRow);
+      panel.appendChild(selectionRow);
       panel.appendChild(bulkRow);
       panel.appendChild(presetRow);
     } else {
       panel.appendChild(filterRow);
+      panel.appendChild(selectionRow);
       panel.appendChild(bulkRow);
     }
 
@@ -1285,6 +1823,19 @@
     statusNode.className = 'viti-status';
     statusNode.textContent = 'Brak niezapisanych zmian';
     statusRow.appendChild(statusNode);
+
+    saveButton.type = 'button';
+    saveButton.className = 'viti-save-btn';
+    saveButton.textContent = 'Zapisz';
+    saveButton.title = 'Zapisz taktykę indywidualną';
+    saveButton.addEventListener('click', function () {
+      var saveLink = findSaveLink(documentRef);
+
+      if (saveLink) {
+        saveLink.click();
+      }
+    });
+    statusRow.appendChild(saveButton);
     panel.appendChild(statusRow);
 
     positionSelect.value = state.activePositionFilter;
@@ -1292,6 +1843,9 @@
       state.activePositionFilter = positionSelect.value;
       updateRowVisibility(view, state.activePositionFilter);
     });
+
+    state.updateSelectionUi = refreshSelectionUi;
+    refreshSelectionUi();
 
     return {
       panel: panel,
@@ -1328,8 +1882,12 @@
       node.classList.remove('viti-save-dirty');
     });
 
+    cleanupRowEnhancements(documentRef);
+
     state.snapshot = null;
     state.scenarioSelect = null;
+    state.selectedPlayerIds = {};
+    state.updateSelectionUi = null;
   }
 
   function enhanceIndividualTactics(documentRef) {
@@ -1370,10 +1928,15 @@
     }
 
     updateRowVisibility(view, state.activePositionFilter);
+    attachRowEnhancements(documentRef, view);
     attachValueEnhancements(documentRef, view, built.statusNode);
     hookScenarioSelect(documentRef, built.statusNode);
     hookSaveLink(documentRef, built.statusNode);
     updateDirtyUi(documentRef, built.statusNode);
+
+    fetchTrainingPlayerData().then(function (trainingData) {
+      applyTrainingAttributesToView(documentRef, view, trainingData);
+    });
   }
 
   function start() {
