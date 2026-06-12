@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VM Individual Tactics Enhancer
 // @namespace    https://vm-manager.org/
-// @version      0.2.8
+// @version      0.2.9
 // @description  Bulk edit, player selection, attribute chips, position presets and dirty-state tracking for VM Manager individual tactics view.
 // @match        *://*.vm-manager.org/*
 // @match        *://vm-manager.org/*
@@ -1660,6 +1660,50 @@
     return node;
   }
 
+  function isTacticsSpacerRow(row) {
+    var cells;
+    var cell;
+    var height;
+
+    if (!row || row.tagName !== 'TR') {
+      return false;
+    }
+
+    if (row.querySelector('#cup_id, select, input, textarea, button')) {
+      return false;
+    }
+
+    cells = row.querySelectorAll('td, th');
+
+    if (!cells.length) {
+      return true;
+    }
+
+    if (cells.length === 1) {
+      cell = cells[0];
+      height = cell.getAttribute('height');
+
+      if (height === '1' || height === 1) {
+        return true;
+      }
+
+      if (!normalizeText(cell.textContent) && !cell.querySelector('img, table')) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  function repairWronglyHiddenSpacerRows(documentRef) {
+    documentRef.querySelectorAll('tr.viti-tactics-spacer').forEach(function (row) {
+      if (!isTacticsSpacerRow(row)) {
+        row.classList.remove('viti-tactics-spacer');
+        row.removeAttribute(SPACER_ATTR);
+      }
+    });
+  }
+
   function ensureTacticsSpacerHidden(documentRef) {
     var blockRow = findTacticsBlockRow(documentRef);
     var prev;
@@ -1668,9 +1712,11 @@
       return;
     }
 
+    repairWronglyHiddenSpacerRows(documentRef);
+
     prev = blockRow.previousElementSibling;
 
-    if (prev && prev.tagName === 'TR' && !prev.hasAttribute(SPACER_ATTR)) {
+    if (isTacticsSpacerRow(prev) && !prev.hasAttribute(SPACER_ATTR)) {
       prev.setAttribute(SPACER_ATTR, '1');
       prev.classList.add('viti-tactics-spacer');
     }
@@ -1905,7 +1951,7 @@
   }
 
   function hookScenarioSelect(documentRef, statusNode) {
-    var select = dom.getVisibleElementById(documentRef, 'cup_id');
+    var select = dom.getVisibleElementById(documentRef, 'cup_id') || documentRef.querySelector('#cup_id');
 
     if (!select || select.getAttribute(SIGNATURE_ATTR) === 'hooked') {
       state.scenarioSelect = select;
@@ -2280,6 +2326,7 @@
       }
 
       cancelDeactivateTimer();
+      repairWronglyHiddenSpacerRows(documentRef);
 
       view = parseIndividualView(documentRef);
 
